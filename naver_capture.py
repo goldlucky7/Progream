@@ -7,11 +7,12 @@
  2) 제목/작성자/본문/이미지를 추출해서
  3) 보기 좋은 HTML 보고서 하나로 정리해 줍니다.
 
-사용법:
-  최초 1회 로그인:  python naver_capture.py login
-  글 캡쳐:          python naver_capture.py "카페 글 주소"
-  여러 개 한번에:    python naver_capture.py "주소1" "주소2" ...
-  브라우저 보면서:   python naver_capture.py --show "카페 글 주소"
+사용법 (bat 파일 더블클릭을 권장):
+  최초 1회 로그인:   python naver_capture.py login
+  글 1개 캡쳐:       python naver_capture.py "카페 글 주소"
+  여러 개 한번에:     capture_all.bat 더블클릭 → 메모장에 주소 붙여넣기 → 저장 후 닫기
+                     (또는 python naver_capture.py --file links.txt)
+  브라우저 보면서:    python naver_capture.py --show "카페 글 주소"
 
 로그인 정보(비밀번호)는 이 프로그램에 입력하지 않습니다.
 login 명령을 실행하면 실제 브라우저 창이 열리고, 거기서 직접 로그인하면
@@ -44,6 +45,8 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 PROFILE_DIR = BASE_DIR / "browser_profile"
 OUTPUT_DIR = BASE_DIR / "output"
+
+URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
 CONTENT_SELECTORS = [
     ".se-main-container",   # 스마트에디터 ONE (요즘 글 대부분)
@@ -82,7 +85,7 @@ def do_login():
                 return
             if any(c["name"] == "NID_AUT" for c in cookies):
                 print("로그인 확인 완료! 이제 링크만 넣으면 캡쳐할 수 있습니다.")
-                print('사용 예: python naver_capture.py "카페 글 주소"  (또는 capture.bat 실행)')
+                print("한 개: capture.bat / 여러 개: capture_all.bat 을 실행하세요.")
                 ctx.close()
                 return
         print("10분 안에 로그인이 확인되지 않았습니다. 다시 실행해 주세요.")
@@ -243,81 +246,118 @@ REPORT_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def capture(url, show=False):
-    print("")
-    print("캡쳐 시작: %s" % url)
+def capture_one(ctx, page, url):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(1500)
+
+    if "nid.naver.com" in page.url:
+        print("로그인이 되어 있지 않습니다. 먼저 login.bat(또는 python naver_capture.py login)을 실행해 주세요.")
+        return False
+
+    # 구형 카페 주소는 글이 iframe(cafe_main) 안에 들어있다.
+    # iframe이 있으면 그 안의 실제 글 주소로 직접 이동해서 전체 캡쳐가 가능하게 한다.
+    frame = page.frame(name="cafe_main")
+    if frame and frame.url and frame.url != "about:blank":
+        page.goto(frame.url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(1000)
+
+    try:
+        page.wait_for_selector(", ".join(CONTENT_SELECTORS), timeout=20000)
+    except PlaywrightTimeout:
+        print("본문 영역을 찾지 못했습니다. (멤버 등급 제한 글이거나 화면 구조가 다른 글일 수 있습니다)")
+        print("일단 화면 전체 스크린샷만 저장합니다.")
+
+    scroll_whole_page(page)
+    normalize_lazy_images(page)
+
+    title = first_text(page, TITLE_SELECTORS) or page.title() or "제목없음"
+    author = first_text(page, AUTHOR_SELECTORS) or "알 수 없음"
+    date = first_text(page, DATE_SELECTORS) or "알 수 없음"
+
+    content_html = ""
+    for sel in CONTENT_SELECTORS:
+        el = page.query_selector(sel)
+        if el:
+            content_html = el.inner_html()
+            break
+    if not content_html:
+        content_html = "<p>(본문을 추출하지 못했습니다. 아래 스크린샷을 확인해 주세요)</p>"
+
+    timestamp = datetime.datetime.now()
+    folder = OUTPUT_DIR / ("%s_%s" % (timestamp.strftime("%Y%m%d_%H%M%S"), safe_filename(title)))
+    folder.mkdir(parents=True, exist_ok=True)
+
+    shot_path = folder / "screenshot.png"
+    page.screenshot(path=str(shot_path), full_page=True)
+
+    content_html = sanitize_html(content_html)
+    print("이미지 정리 중...")
+    content_html = embed_images(ctx, content_html)
+
+    report = REPORT_TEMPLATE.format(
+        title=title,
+        author=author,
+        date=date,
+        url=url,
+        content=content_html,
+        screenshot_b64=base64.b64encode(shot_path.read_bytes()).decode("ascii"),
+        captured_at=timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    report_path = folder / "정리본.html"
+    report_path.write_text(report, encoding="utf-8")
+
+    print("완료!")
+    print("  정리본:   %s" % report_path)
+    print("  스크린샷: %s" % shot_path)
+    return True
+
+
+def capture_many(urls, show=False):
+    # 브라우저를 한 번만 켜고 모든 링크를 순서대로 캡쳐한다.
+    success = 0
     with sync_playwright() as p:
         ctx = launch_browser(p, headless=not show)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(1500)
-
-            if "nid.naver.com" in page.url:
-                print("로그인이 되어 있지 않습니다. 먼저 login.bat(또는 python naver_capture.py login)을 실행해 주세요.")
-                return False
-
-            # 구형 카페 주소는 글이 iframe(cafe_main) 안에 들어있다.
-            # iframe이 있으면 그 안의 실제 글 주소로 직접 이동해서 전체 캡쳐가 가능하게 한다.
-            frame = page.frame(name="cafe_main")
-            if frame and frame.url and frame.url != "about:blank":
-                page.goto(frame.url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(1000)
-
+        for i, url in enumerate(urls, 1):
+            print("")
+            print("[%d/%d] 캡쳐 시작: %s" % (i, len(urls), url))
             try:
-                page.wait_for_selector(", ".join(CONTENT_SELECTORS), timeout=20000)
+                if capture_one(ctx, page, url):
+                    success += 1
             except PlaywrightTimeout:
-                print("본문 영역을 찾지 못했습니다. (멤버 등급 제한 글이거나 화면 구조가 다른 글일 수 있습니다)")
-                print("일단 화면 전체 스크린샷만 저장합니다. --show 옵션으로 다시 시도해 볼 수도 있습니다.")
+                print("페이지를 여는 데 너무 오래 걸립니다. 이 글은 건너뛰고 다음 글로 넘어갑니다.")
+            except Exception as e:
+                print("이 글을 캡쳐하다 문제가 생겨 건너뜁니다: %s" % e)
+        ctx.close()
+    print("")
+    print("총 %d개 중 %d개 캡쳐 완료. 결과는 output 폴더에 있습니다." % (len(urls), success))
+    return success
 
-            scroll_whole_page(page)
-            normalize_lazy_images(page)
 
-            title = first_text(page, TITLE_SELECTORS) or page.title() or "제목없음"
-            author = first_text(page, AUTHOR_SELECTORS) or "알 수 없음"
-            date = first_text(page, DATE_SELECTORS) or "알 수 없음"
+def extract_urls(text):
+    seen = set()
+    urls = []
+    for url in URL_RE.findall(text):
+        url = url.rstrip(".,)»]}\"'")
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
 
-            content_html = ""
-            for sel in CONTENT_SELECTORS:
-                el = page.query_selector(sel)
-                if el:
-                    content_html = el.inner_html()
-                    break
-            if not content_html:
-                content_html = "<p>(본문을 추출하지 못했습니다. 아래 스크린샷을 확인해 주세요)</p>"
 
-            timestamp = datetime.datetime.now()
-            folder = OUTPUT_DIR / ("%s_%s" % (timestamp.strftime("%Y%m%d_%H%M%S"), safe_filename(title)))
-            folder.mkdir(parents=True, exist_ok=True)
-
-            shot_path = folder / "screenshot.png"
-            page.screenshot(path=str(shot_path), full_page=True)
-
-            content_html = sanitize_html(content_html)
-            print("이미지 정리 중...")
-            content_html = embed_images(ctx, content_html)
-
-            report = REPORT_TEMPLATE.format(
-                title=title,
-                author=author,
-                date=date,
-                url=url,
-                content=content_html,
-                screenshot_b64=base64.b64encode(shot_path.read_bytes()).decode("ascii"),
-                captured_at=timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            )
-            report_path = folder / "정리본.html"
-            report_path.write_text(report, encoding="utf-8")
-
-            print("완료!")
-            print("  정리본:   %s" % report_path)
-            print("  스크린샷: %s" % shot_path)
-            return True
-        except PlaywrightTimeout:
-            print("페이지를 여는 데 너무 오래 걸립니다. 인터넷 연결과 주소를 확인한 뒤 다시 시도해 주세요.")
-            return False
-        finally:
-            ctx.close()
+def read_links_file(path):
+    # 메모장이 어떤 인코딩으로 저장했든 읽을 수 있게 처리
+    data = Path(path).read_bytes()
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "cp949"):
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = data.decode("utf-8", errors="replace")
+    return extract_urls(text)
 
 
 def print_usage():
@@ -334,22 +374,39 @@ def main():
         return
 
     show = "--show" in args
-    urls = [a for a in args if a.startswith("http")]
+
+    urls = []
+    if "--file" in args:
+        idx = args.index("--file")
+        if idx + 1 >= len(args):
+            print("--file 뒤에 파일 이름이 필요합니다. 예: python naver_capture.py --file links.txt")
+            return
+        links_path = Path(args[idx + 1])
+        if not links_path.is_absolute():
+            links_path = BASE_DIR / links_path
+        if not links_path.exists():
+            print("링크 파일을 찾을 수 없습니다: %s" % links_path)
+            return
+        urls.extend(read_links_file(links_path))
+
+    for a in args:
+        if a.startswith("http"):
+            urls.extend(extract_urls(a))
+
+    # 중복 제거 (순서 유지)
+    seen = set()
+    urls = [u for u in urls if not (u in seen or seen.add(u))]
+
     if not urls:
         print("캡쳐할 주소(http로 시작)를 찾지 못했습니다.")
-        print('사용 예: python naver_capture.py "https://cafe.naver.com/카페이름/글번호"')
+        print("메모장(links.txt)에 주소를 붙여넣고 저장했는지 확인해 주세요.")
         return
 
     if not PROFILE_DIR.exists():
         print("아직 로그인한 적이 없습니다. 먼저 login.bat(또는 python naver_capture.py login)을 실행해 주세요.")
         return
 
-    success = 0
-    for url in urls:
-        if capture(url, show=show):
-            success += 1
-    print("")
-    print("총 %d개 중 %d개 캡쳐 완료. 결과는 output 폴더에 있습니다." % (len(urls), success))
+    capture_many(urls, show=show)
 
 
 if __name__ == "__main__":
