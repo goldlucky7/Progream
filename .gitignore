@@ -1,0 +1,8 @@
+# 로그인 정보가 저장되는 폴더 - 절대 공유/업로드 금지
+browser_profile/
+
+# 캡쳐 결과물
+output/
+
+__pycache__/
+*.pyc
