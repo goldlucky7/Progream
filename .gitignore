@@ -6,3 +6,6 @@ output/
 
 __pycache__/
 *.pyc
+
+# 검토 프로그램이 만드는 리포트
+검토리포트.html
