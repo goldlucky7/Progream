@@ -3,10 +3,11 @@
 동영상 내용 검사 모듈 (japan_review.py에서 사용)
 
 완성본 동영상(.mp4)을 실제로 열어서:
-  1. 씬 전환 시점을 감지하고 (장면이 바뀌는 순간)
-  2. 각 장면이 프로젝트의 어떤 이미지인지 대조해서 누락·순서 뒤바뀜을 찾고
-  3. 자막이 화면 어디에 표시되는지(하단 안전영역인지), 안 보이는 구간은 없는지
-  4. 타임라인 표가 있으면 실제 전환 시점과 맞는지
+  1. 1초 간격으로 화면을 뽑아 "지금 어떤 이미지가 나오는지"를 프로젝트 이미지와 직접 대조
+     (줌·확대 효과, 크로스페이드 전환이 있어도 동작하도록 설계)
+  2. 빠진 이미지 · 순서 뒤바뀜 · 중복 사용을 찾고
+  3. 자막이 화면 어디에 표시되는지(하단 안전영역인지), 안 보이는 자막은 없는지
+  4. 타임라인 표가 있으면 실제 장면 전환 시점과 맞는지
 확인합니다. ffmpeg(imageio-ffmpeg 설치 시 자동 포함)가 필요합니다.
 """
 
@@ -16,17 +17,16 @@ import subprocess
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageChops, ImageStat
+    from PIL import Image, ImageChops, ImageStat, ImageFilter
 except ImportError:
     Image = None
 
-# 분석용 축소 해상도 (비율은 16:9 기준으로 통일해서 비교)
-SMALL = (160, 90)
-CUT_MIN_DIFF = 15.0        # 이 값 이상 화면이 변하면 '장면 전환' 후보
-HASH_MATCH_MAX = 20        # dHash 해밍거리 - 이보다 크면 '다른 그림'
-SUB_ROW_DIFF = 9.0         # 자막 감지: 행 평균 밝기 차이 기준
-SUB_SAMPLES_MAX = 24       # 자막 위치 샘플 검사 개수 (속도를 위해 제한)
+SMALL = (160, 90)          # 분석용 축소 해상도 (16:9 기준으로 통일)
+HASH_MATCH_MAX = 26        # dHash 해밍거리 - 이보다 크면 '이 이미지가 아님' (줌 감안 여유)
+CUT_HASH_MIN = 10          # 이미지 없이 전환 감지할 때의 해시 변화 기준
+SUB_SAMPLES_MAX = 24       # 자막 위치 표본 검사 개수
 SUB_TOP_LIMIT = 0.62       # 자막 세로 중심이 화면 위쪽 62% 안이면 '위쪽 배치'
+MIN_SCENE_SEC = 2.0        # 이보다 짧은 장면 구간은 전환 효과로 보고 이웃에 흡수
 
 
 def find_ffmpeg():
@@ -37,12 +37,11 @@ def find_ffmpeg():
         return shutil.which("ffmpeg")
 
 
-def _run(cmd, timeout=600):
+def _run(cmd, timeout=900):
     return subprocess.run(cmd, capture_output=True, timeout=timeout)
 
 
 def video_info(ffmpeg, path):
-    """(길이초, 가로, 세로) - ffmpeg -i 의 stderr에서 읽는다."""
     r = _run([ffmpeg, "-hide_banner", "-i", str(path)], timeout=60)
     text = r.stderr.decode("utf-8", errors="replace")
     dur = None
@@ -58,22 +57,19 @@ def video_info(ffmpeg, path):
 
 
 def sample_frames(ffmpeg, path):
-    """1초 간격 흑백 축소 프레임 목록 [(초, PIL이미지), ...]"""
+    """1초 간격 흑백 축소 프레임 [(초, PIL이미지), ...]"""
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(path),
            "-vf", f"fps=1,scale={SMALL[0]}:{SMALL[1]}", "-pix_fmt", "gray",
            "-f", "rawvideo", "-"]
     r = _run(cmd)
     raw = r.stdout
     n = SMALL[0] * SMALL[1]
-    frames = []
-    for i in range(len(raw) // n):
-        img = Image.frombytes("L", SMALL, raw[i * n:(i + 1) * n])
-        frames.append((float(i), img))
-    return frames
+    return [(float(i), Image.frombytes("L", SMALL, raw[i * n:(i + 1) * n]))
+            for i in range(len(raw) // n)]
 
 
 def frame_at(ffmpeg, path, t, width=480):
-    """특정 시각의 프레임 1장 (흑백, 폭 width로 축소)"""
+    """특정 시각의 프레임 1장 (흑백, 폭 width 축소)"""
     h = int(width * 9 / 16)
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error",
            "-ss", f"{max(0.0, t):.2f}", "-i", str(path), "-frames:v", "1",
@@ -83,35 +79,6 @@ def frame_at(ffmpeg, path, t, width=480):
     if len(r.stdout) < width * h:
         return None
     return Image.frombytes("L", (width, h), r.stdout[:width * h])
-
-
-def frame_diff(a, b):
-    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
-
-
-def detect_scenes(frames):
-    """[(시작초, 끝초, 대표프레임), ...] - 화면이 크게 바뀌는 지점으로 나눈다."""
-    if len(frames) < 2:
-        return [(0.0, frames[-1][0] + 1 if frames else 0.0,
-                 frames[0][1] if frames else None)]
-    diffs = [frame_diff(frames[i - 1][1], frames[i][1])
-             for i in range(1, len(frames))]
-    sorted_d = sorted(diffs)
-    median = sorted_d[len(sorted_d) // 2]
-    threshold = max(CUT_MIN_DIFF, median * 4)
-    cuts = [frames[i + 1][0] for i, d in enumerate(diffs) if d >= threshold]
-    scenes = []
-    start = 0.0
-    for c in cuts:
-        scenes.append((start, c))
-        start = c
-    scenes.append((start, frames[-1][0] + 1.0))
-    out = []
-    for s, e in scenes:
-        mid = (s + e) / 2
-        rep = min(frames, key=lambda f: abs(f[0] - mid))[1]
-        out.append((s, e, rep))
-    return out
 
 
 def dhash(img):
@@ -133,15 +100,72 @@ def fmt_t(sec):
     return f"{m}:{s:02d}"
 
 
+# ── 장면 분석: 매 초 프레임을 이미지와 직접 대조 ────────────────────────────
+def label_frames(frames, img_hashes):
+    """각 프레임에 (가장 비슷한 이미지 파일 or None) 라벨을 붙인다."""
+    labels = []
+    for _t, img in frames:
+        h = dhash(img)
+        best, best_d = None, 999
+        for f, ih in img_hashes:
+            d = hamming(h, ih)
+            if d < best_d:
+                best, best_d = f, d
+        labels.append(best if best_d <= HASH_MATCH_MAX else None)
+    # 한 프레임짜리 라벨 튐(페이드 순간 등)은 양옆 라벨로 메꾼다
+    for i in range(1, len(labels) - 1):
+        if labels[i] != labels[i - 1] and labels[i - 1] == labels[i + 1]:
+            labels[i] = labels[i - 1]
+    return labels
+
+
+def build_segments(frames, labels):
+    """라벨이 이어지는 구간으로 장면을 나눈다. [(시작, 끝, 라벨), ...]"""
+    segs = []
+    start = frames[0][0]
+    cur = labels[0]
+    for i in range(1, len(labels)):
+        if labels[i] != cur:
+            segs.append([start, frames[i][0], cur])
+            start, cur = frames[i][0], labels[i]
+    segs.append([start, frames[-1][0] + 1.0, cur])
+    # 너무 짧은 구간(전환 효과의 흔적)은 앞 구간에 흡수
+    merged = []
+    for s in segs:
+        if merged and (s[1] - s[0]) < MIN_SCENE_SEC and s[2] is None:
+            merged[-1][1] = s[1]
+        else:
+            merged.append(s)
+    # 같은 라벨이 연달아 남았으면 합침
+    out = []
+    for s in merged:
+        if out and out[-1][2] == s[2]:
+            out[-1][1] = s[1]
+        else:
+            out.append(s)
+    return [(s, e, lb) for s, e, lb in out]
+
+
+def detect_cuts_no_images(frames):
+    """이미지가 없을 때: 해시 변화가 주변보다 튀는 지점을 전환으로 본다."""
+    hashes = [dhash(img) for _t, img in frames]
+    diffs = [hamming(hashes[i - 1], hashes[i]) for i in range(1, len(hashes))]
+    if not diffs:
+        return []
+    sd = sorted(diffs)
+    median = sd[len(sd) // 2]
+    threshold = max(CUT_HASH_MIN, median * 3)
+    cuts = []
+    for i, d in enumerate(diffs):
+        t = frames[i + 1][0]
+        if d >= threshold and (not cuts or t - cuts[-1] >= MIN_SCENE_SEC):
+            cuts.append(t)
+    return cuts
+
+
 # ── 메인 진입점 ──────────────────────────────────────────────────────────────
 def check_video_content(video_path, image_files, sub_cues, timeline_starts,
                         report, section="⑦ 동영상 내용"):
-    """
-    video_path: 완성본 동영상
-    image_files: 프로젝트 이미지 Path 목록
-    sub_cues: [(시작초, 끝초, 텍스트), ...] (자막 파일에서)
-    timeline_starts: 타임라인 표의 씬 시작 시각(초) 목록 (없으면 [])
-    """
     sec = section
     if Image is None:
         report.add(sec, "주의", "Pillow가 없어 동영상 내용 검사를 건너뜁니다",
@@ -158,108 +182,86 @@ def check_video_content(video_path, image_files, sub_cues, timeline_starts,
         report.add(sec, "오류", f"동영상을 열 수 없습니다: {Path(video_path).name}")
         return
     report.stat(sec, "동영상", f"{Path(video_path).name} "
-                f"({size[0]}x{size[1]}, {fmt_t(dur)})" if size
-                else f"{Path(video_path).name} ({fmt_t(dur)})")
+                + (f"({size[0]}x{size[1]}, {fmt_t(dur)})" if size else f"({fmt_t(dur)})"))
 
     frames = sample_frames(ffmpeg, video_path)
     if len(frames) < 2:
         report.add(sec, "오류", "동영상에서 프레임을 읽지 못했습니다")
         return
 
-    # 1) 씬 전환 감지
-    scenes = detect_scenes(frames)
-    report.stat(sec, "감지된 장면 수", f"{len(scenes)}개 (화면이 크게 바뀐 지점 기준)")
+    img_hashes = []
+    for f in image_files:
+        try:
+            with Image.open(f) as im:
+                img_hashes.append((f, dhash(im.convert("L").resize(SMALL))))
+        except Exception:
+            pass
 
-    if image_files:
-        n_img = len(image_files)
-        if abs(len(scenes) - n_img) > max(1, n_img * 0.15):
-            report.add(sec, "주의",
-                       f"영상 속 장면 수({len(scenes)}개)와 이미지 수({n_img}장)가 다릅니다",
-                       "이미지가 빠졌거나, 인트로/아웃트로 같은 추가 장면이 있거나,\n"
-                       "줌·전환 효과 때문에 감지가 어긋났을 수 있습니다. 아래 매칭 결과로 확인하세요.")
-        else:
-            report.add(sec, "통과", f"장면 수({len(scenes)}개)가 이미지 수({n_img}장)와 비슷합니다")
+    scenes = []          # (시작, 끝) - 자막 검사용
+    cut_times = []
+    if img_hashes:
+        labels = label_frames(frames, img_hashes)
+        segments = build_segments(frames, labels)
+        scenes = [(s, e) for s, e, _ in segments]
+        cut_times = [s for s, _, _ in segments[1:]]
 
-    # 짧은 장면 (편집 실수로 순간 스치는 장면)
-    shorts = [f"{fmt_t(s)}~{fmt_t(e)} ({e - s:.0f}초)"
-              for s, e, _ in scenes if (e - s) < 2 and len(scenes) > 1]
-    if shorts:
-        report.add(sec, "주의", f"2초도 안 되는 짧은 장면이 {len(shorts)}개 있습니다",
-                   "\n".join(shorts[:10]))
+        matched_segs = [(s, e, lb) for s, e, lb in segments if lb is not None]
+        report.stat(sec, "감지된 장면", f"{len(matched_segs)}개 (이미지와 대조해서 인식)")
 
-    # 2) 장면 ↔ 이미지 매칭 (어떤 이미지가 영상에 실제로 나오는지)
-    if image_files:
-        img_hashes = []
-        for f in image_files:
-            try:
-                with Image.open(f) as im:
-                    img_hashes.append((f, dhash(im.convert("L").resize(SMALL))))
-            except Exception:
-                pass
-        matches = []      # (장면번호, 시작, 끝, 매칭파일 or None, 거리)
-        for idx, (s, e, rep) in enumerate(scenes, start=1):
-            h = dhash(rep)
-            best, best_d = None, 999
-            for f, ih in img_hashes:
-                d = hamming(h, ih)
-                if d < best_d:
-                    best, best_d = f, d
-            if best_d <= HASH_MATCH_MAX:
-                matches.append((idx, s, e, best, best_d))
-            else:
-                matches.append((idx, s, e, None, best_d))
-
-        unmatched_scenes = [f"장면{i} ({fmt_t(s)}~{fmt_t(e)})"
-                            for i, s, e, f, _ in matches if f is None]
-        used = [f for _, _, _, f, _ in matches if f is not None]
-        missing_imgs = [f.name for f, _ in img_hashes if f not in used]
-        dup_imgs = sorted({f.name for f in used if used.count(f) > 1})
-
-        # 순서 검사 - 파일명 숫자 기준으로 증가해야 정상
+        # 나오지 않는 이미지 / 순서 / 중복
+        used_files = [lb for _s, _e, lb in matched_segs]
+        missing = [f.name for f, _ in img_hashes if f not in used_files]
+        dups = sorted({f.name for f in used_files if used_files.count(f) > 1})
         order_break = []
         prev_num = None
-        for i, s, e, f, _ in matches:
-            if f is None:
-                continue
-            nums = re.findall(r"\d+", f.stem)
+        for s, e, lb in matched_segs:
+            nums = re.findall(r"\d+", lb.stem)
             if not nums:
                 continue
             num = int(nums[-1])
             if prev_num is not None and num < prev_num:
                 order_break.append(
-                    f"장면{i} ({fmt_t(s)}): {f.name} 이(가) 앞 장면({prev_num:03d})보다 앞 번호")
+                    f"{fmt_t(s)}부터 {lb.name} - 앞 장면({prev_num:03d})보다 앞 번호")
             prev_num = num
+        unmatched = [(s, e) for s, e, lb in segments if lb is None and e - s >= 3]
 
-        if missing_imgs:
+        if missing:
             report.add(sec, "오류",
-                       f"영상에 나오지 않는 이미지가 {len(missing_imgs)}장 있습니다",
-                       "편집에서 빠뜨렸을 수 있습니다:\n" + "\n".join(missing_imgs[:15]))
+                       f"영상에 나오지 않는 이미지가 {len(missing)}장 있습니다",
+                       "편집에서 빠뜨렸을 수 있습니다:\n" + "\n".join(missing[:15]))
         if order_break:
             report.add(sec, "오류",
                        f"이미지 순서가 뒤바뀐 장면이 {len(order_break)}개 있습니다",
                        "\n".join(order_break[:10]))
-        if dup_imgs:
+        if dups:
             report.add(sec, "주의",
-                       f"같은 이미지가 여러 장면에 나오는 것으로 보입니다 ({len(dup_imgs)}장)",
-                       "\n".join(dup_imgs[:10]))
-        if unmatched_scenes:
+                       f"같은 이미지가 여러 장면에 나오는 것으로 보입니다 ({len(dups)}장)",
+                       "\n".join(dups[:10]))
+        if unmatched:
             report.add(sec, "정보",
-                       f"프로젝트 이미지와 매칭되지 않은 장면이 {len(unmatched_scenes)}개 있습니다",
+                       f"프로젝트 이미지와 매칭되지 않은 구간이 {len(unmatched)}곳 있습니다",
                        "인트로/아웃트로/자료 화면이면 정상입니다.\n"
-                       + "\n".join(unmatched_scenes[:10]))
-        if not missing_imgs and not order_break:
-            report.add(sec, "통과",
-                       "모든 이미지가 영상에 순서대로 들어가 있습니다")
+                       + "\n".join(f"{fmt_t(s)}~{fmt_t(e)}" for s, e in unmatched[:10]))
+        if not missing and not order_break:
+            report.add(sec, "통과", "모든 이미지가 영상에 순서대로 들어가 있습니다")
 
-    # 3) 타임라인 표와 실제 전환 시점 비교
-    if timeline_starts:
-        cut_times = [s for s, _, _ in scenes[1:]]
-        misses = []
-        for t in timeline_starts:
-            if t <= 0.5:
-                continue
-            if not any(abs(t - c) <= 1.5 for c in cut_times):
-                misses.append(fmt_t(t))
+        # 장면 길이 이상 (편집 실수로 순간 스치는 장면)
+        shorts = [f"{fmt_t(s)}~{fmt_t(e)} ({lb.name}, {e - s:.0f}초)"
+                  for s, e, lb in matched_segs if (e - s) < MIN_SCENE_SEC]
+        if shorts:
+            report.add(sec, "주의", f"2초도 안 되는 짧은 장면이 {len(shorts)}개 있습니다",
+                       "\n".join(shorts[:10]))
+    else:
+        cut_times = detect_cuts_no_images(frames)
+        starts = [0.0] + cut_times
+        ends = cut_times + [frames[-1][0] + 1.0]
+        scenes = list(zip(starts, ends))
+        report.stat(sec, "감지된 장면", f"{len(scenes)}개 (화면 변화 기준, 이미지 없이 추정)")
+
+    # 타임라인 표와 실제 전환 시점 비교
+    if timeline_starts and cut_times:
+        misses = [fmt_t(t) for t in timeline_starts
+                  if t > 0.5 and not any(abs(t - c) <= 2.0 for c in cut_times)]
         if misses:
             report.add(sec, "주의",
                        f"타임라인에 적힌 시각에 실제 장면 전환이 없는 곳이 {len(misses)}곳 있습니다",
@@ -267,54 +269,72 @@ def check_video_content(video_path, image_files, sub_cues, timeline_starts,
         else:
             report.add(sec, "통과", "타임라인의 씬 시작 시각과 실제 장면 전환이 일치합니다")
 
-    # 4) 자막 위치·표시 검사 (영상에 구워진 자막)
-    if sub_cues:
+    # 자막 위치·표시 검사
+    if sub_cues and scenes:
         _check_burned_subtitles(ffmpeg, video_path, sub_cues, scenes, report, sec)
 
 
-def _find_gap_time(cue, cues, scene):
-    """같은 장면 안에서 자막이 없는 순간을 찾는다. 없으면 None."""
+# ── 자막 위치 검사 ───────────────────────────────────────────────────────────
+def _nearest_gap_time(cue, cues, scene):
+    """자막이 꺼져 있는 순간 중, 이 자막과 시간상 가장 가까운 순간을 찾는다.
+    (줌 효과 중에도 배경이 거의 같도록 가까운 시각을 고른다)"""
+    cs, ce = cue
     s_start, s_end = scene
-    step = 0.4
-    t = s_start + 0.2
-    while t < s_end - 0.1:
-        if not any(cs - 0.15 <= t <= ce + 0.15 for cs, ce, _ in cues):
-            return t
-        t += step
+
+    def free(t):
+        return (s_start + 0.1 <= t <= s_end - 0.1
+                and not any(a - 0.2 <= t <= b + 0.2 for a, b, _ in cues))
+
+    for delta in (0.5, 0.8, 1.2, 1.8, 2.5):
+        for t in (cs - delta, ce + delta):
+            if free(t):
+                return t
     return None
 
 
+def _row_profile(f_on, f_off):
+    """두 프레임 차이의 행별 평균 밝기. 부드럽게 블러 후 비교."""
+    a = f_on.filter(ImageFilter.GaussianBlur(1.2))
+    b = f_off.filter(ImageFilter.GaussianBlur(1.2))
+    diff = ImageChops.difference(a, b)
+    w, h = diff.size
+    return [ImageStat.Stat(diff.crop((0, y, w, y + 1))).mean[0] for y in range(h)], h
+
+
 def _check_burned_subtitles(ffmpeg, video_path, cues, scenes, report, sec):
-    """자막 표시 구간/비표시 구간 프레임을 비교해서 자막의 실제 위치를 찾는다."""
-    # 검사할 자막을 영상 전체에 고르게 분산해서 뽑는다
     usable = [c for c in cues if c[1] - c[0] >= 0.8]
     if not usable:
         return
     step = max(1, len(usable) // SUB_SAMPLES_MAX)
     picked = usable[::step][:SUB_SAMPLES_MAX]
 
-    no_sub, high_pos, off_edge, checked = [], [], [], 0
+    no_sub, high_pos, off_edge, skipped = [], [], [], 0
+    checked = 0
     for cs, ce, _txt in picked:
         mid = (cs + ce) / 2
-        scene = next(((s, e) for s, e, _ in scenes if s <= mid < e), None)
+        scene = next(((s, e) for s, e in scenes if s <= mid < e), None)
         if scene is None:
+            skipped += 1
             continue
-        gap_t = _find_gap_time((cs, ce), cues, scene)
+        gap_t = _nearest_gap_time((cs, ce), cues, scene)
         if gap_t is None:
-            continue  # 이 장면은 내내 자막이 있어 비교 기준이 없음
-        f_on = frame_at(ffmpeg, video_path, mid)
+            skipped += 1
+            continue
+        # 자막 프레임은 자막이 완전히 표시된 순간을 고른다 (등장 애니메이션 회피)
+        t_on = min(max(cs + 0.6, mid), ce - 0.3)
+        f_on = frame_at(ffmpeg, video_path, t_on)
         f_off = frame_at(ffmpeg, video_path, gap_t)
         if f_on is None or f_off is None:
+            skipped += 1
             continue
-        w, h = f_on.size
-        diff = ImageChops.difference(f_on, f_off)
-        rows = []
-        for y in range(h):
-            row = diff.crop((0, y, w, y + 1))
-            if ImageStat.Stat(row).mean[0] > SUB_ROW_DIFF:
-                rows.append(y)
-        # 화면 절반 이상이 변했으면 줌·전환 효과라 배경 비교가 성립하지 않음 → 건너뜀
+        profile, h = _row_profile(f_on, f_off)
+        sp = sorted(profile)
+        base_level = sp[len(sp) // 2]                     # 배경 흔들림(줌 등) 수준
+        threshold = max(10.0, base_level * 3 + 6)
+        rows = [y for y, v in enumerate(profile) if v > threshold]
+        # 화면 절반 이상이 변했으면 전환·큰 움직임이라 판정 불가
         if len(rows) > h * 0.45 or (rows and rows[-1] - rows[0] > h * 0.6):
+            skipped += 1
             continue
         checked += 1
         label = f"{fmt_t(cs)} 자막"
@@ -330,9 +350,10 @@ def _check_burned_subtitles(ffmpeg, video_path, cues, scenes, report, sec):
 
     if checked == 0:
         report.add(sec, "정보", "자막 위치를 판정할 수 있는 장면이 없었습니다",
-                   "장면 내내 자막이 있거나 전환 효과가 많으면 비교 기준을 잡을 수 없습니다.")
+                   "장면 내내 자막이 있거나 전환·움직임 효과가 많으면 비교 기준을 잡을 수 없습니다.")
         return
-    report.stat(sec, "자막 위치 검사", f"{checked}곳 표본 검사")
+    note = f"{checked}곳 표본 검사" + (f" (효과 등으로 판정 불가 {skipped}곳 제외)" if skipped else "")
+    report.stat(sec, "자막 위치 검사", note)
     if no_sub:
         report.add(sec, "오류",
                    f"자막 파일에는 있는데 영상 화면에 안 보이는 자막이 {len(no_sub)}곳 있습니다"
