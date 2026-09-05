@@ -13,3 +13,6 @@ __pycache__/
 # 제미나이 API 키 - 절대 공유/업로드 금지
 api_key.txt
 목소리샘플/
+
+# 자동배치 프로그램 설정 (개인 컴퓨터 경로 포함)
+builder_config.json

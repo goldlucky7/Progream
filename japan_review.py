@@ -212,6 +212,9 @@ def find_project_files(project_dir, report):
     files["images"] = [f for f in all_files if f.suffix.lower() in IMAGE_EXTS]
     audios = [f for f in all_files if f.suffix.lower() in AUDIO_EXTS]
     videos = [f for f in all_files if f.suffix.lower() in VIDEO_EXTS]
+    # 씬별 조각 오디오가 섞여 있어도 전체 나레이션(가장 큰 파일)을 고른다
+    audios.sort(key=lambda f: f.stat().st_size, reverse=True)
+    videos.sort(key=lambda f: f.stat().st_size, reverse=True)
     files["audio"] = audios[0] if audios else None
     files["video"] = videos[0] if videos else None
 
@@ -829,18 +832,23 @@ def load_timeline_rows(path):
     if len(rows) < 2:
         return None, "내용 부족"
     header = [str(c).strip().lower() for c in rows[0]]
+    used = set()
 
     def find_col(*keys):
-        for i, h in enumerate(header):
-            if any(k in h for k in keys):
-                return i
+        # 키 우선순위 순서대로, 아직 배정 안 된 열에서 찾는다
+        # ("시작(초)" 헤더가 "초" 때문에 길이 열로 오인되는 것 방지)
+        for k in keys:
+            for i, h in enumerate(header):
+                if i not in used and k in h:
+                    used.add(i)
+                    return i
         return None
 
     cols = {
-        "num": find_col("씬", "번호", "no", "scene", "順"),
+        "num": find_col("씬", "번호", "scene", "順", "no"),
         "file": find_col("파일", "이미지", "file", "image", "영상", "clip", "素材"),
         "start": find_col("시작", "start", "開始"),
-        "dur": find_col("길이", "duration", "초", "尺", "時間"),
+        "dur": find_col("길이", "duration", "尺", "時間", "초"),
     }
     out = []
     for r in rows[1:]:
