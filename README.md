@@ -4,5 +4,6 @@
 
 - **[naver_capture/](naver_capture/)** — 로그인 필요한 네이버 카페 글을 자동 캡쳐 + HTML 정리
 - **[jp_review/](jp_review/)** — Vrew로 만든 일본어 영상의 자막/이미지/대본/일본어를 자동 검토
+- **[vrew_guide/](vrew_guide/)** — “브루 처리해줘” 한 마디로 영상 편집을 끝내는 브루(Vrew) 자동화 스킬 사용설명서 (그림 설명 포함)
 
 각 폴더 안의 README.md 에 사용법이 있습니다.
