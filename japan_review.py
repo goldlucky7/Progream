@@ -37,6 +37,11 @@ try:
 except ImportError:
     mutagen = None
 
+try:
+    import video_check
+except Exception:
+    video_check = None
+
 # Windows 콘솔 한글 깨짐 방지
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -596,8 +601,10 @@ def check_subtitle_common(cues, report, sec, label):
 
 
 def check_subtitles(sub_files, report):
+    """검사 후 (마지막 자막 끝 시각, [(시작, 끝, 텍스트), ...]) 반환"""
     sec = "④ 자막"
     last_end = None
+    all_cues = []
     for f in sub_files:
         text, enc = read_text(f)
         label = f.name
@@ -608,13 +615,15 @@ def check_subtitles(sub_files, report):
             simple = [(s, e2, "\n".join(t), f"{i + 1}번 자막")
                       for i, (s, e2, t, _) in enumerate(cues)]
             end = check_subtitle_common(simple, report, sec, label)
+            all_cues.extend((s, e2, t) for s, e2, t, _ in simple)
             if end:
                 last_end = max(last_end or 0, end)
         elif f.suffix.lower() == ".ass":
-            end = check_ass_file(f, text, report, sec)
+            end, ass_cues = check_ass_file(f, text, report, sec)
+            all_cues.extend(ass_cues)
             if end:
                 last_end = max(last_end or 0, end)
-    return last_end
+    return last_end, all_cues
 
 
 def check_ass_file(f, text, report, sec):
@@ -685,7 +694,8 @@ def check_ass_file(f, text, report, sec):
     if not out_of_screen and not upper_area and events:
         report.add(sec, "통과", f"{label}: 자막 위치가 모두 화면 안 하단 영역에 있습니다")
 
-    return check_subtitle_common(cues, report, sec, label)
+    end = check_subtitle_common(cues, report, sec, label)
+    return end, [(s, e, t) for s, e, t, _ in cues]
 
 
 # ── 5) 씬 매핑·스토리보드 검사 ──────────────────────────────────────────────
@@ -1098,10 +1108,10 @@ def run_review(project_dir, cpm=DEFAULT_CPM, out=None, auto_open=True):
         print(f"· 이미지 검사 중: {len(files['images'])}장")
         check_images(files["images"], report)
 
-    sub_last_end = None
+    sub_last_end, sub_cues = None, []
     if files["subtitles"]:
         print(f"· 자막 검사 중: {len(files['subtitles'])}개 파일")
-        sub_last_end = check_subtitles(files["subtitles"], report)
+        sub_last_end, sub_cues = check_subtitles(files["subtitles"], report)
 
     if files["mapping"]:
         print(f"· 씬 매핑 검사 중: {files['mapping'].name}")
@@ -1117,6 +1127,28 @@ def run_review(project_dir, cpm=DEFAULT_CPM, out=None, auto_open=True):
     if files["timeline"]:
         print(f"· 타임라인 검사 중: {files['timeline'].name}")
         check_timeline(files["timeline"], files["images"], audio_dur, report)
+
+    if files["video"]:
+        print(f"· 동영상 내용 검사 중: {files['video'].name} (조금 걸릴 수 있어요)")
+        if video_check is None:
+            report.add("⑦ 동영상 내용", "주의",
+                       "동영상 내용 검사 모듈(video_check.py)을 찾지 못했습니다",
+                       "japan_review.py 와 같은 폴더에 video_check.py 가 있어야 합니다.")
+        else:
+            timeline_starts = []
+            if files["timeline"]:
+                rows, _err = load_timeline_rows(files["timeline"])
+                if rows:
+                    timeline_starts = [t for t in
+                                       (parse_seconds(r.get("start")) for r in rows)
+                                       if t is not None]
+            try:
+                video_check.check_video_content(
+                    files["video"], files["images"], sub_cues,
+                    timeline_starts, report)
+            except Exception as e:
+                report.add("⑦ 동영상 내용", "주의",
+                           "동영상 내용 검사 중 문제가 생겨 건너뛰었습니다", str(e))
 
     out_path = Path(out) if out else project_dir / "검토리포트.html"
     render_html(report, project_dir, out_path)
