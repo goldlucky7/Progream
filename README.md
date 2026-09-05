@@ -1,7 +1,8 @@
-이 저장소에는 프로그램이 2개 들어 있습니다.
+이 저장소에는 프로그램 2개와 스킬 백업이 들어 있습니다.
 
 1. **네이버 카페 글 캡쳐 프로그램** — 바로 아래 설명
 2. **일본 영상 프로젝트 검토 프로그램** — [아래로 이동](#일본-영상-프로젝트-검토-프로그램)
+3. **브루(Vrew) 자동화 스킬** — [아래로 이동](#브루vrew-자동화-스킬-skills-폴더)
 
 ---
 
@@ -131,3 +132,22 @@ python japan_review.py "프로젝트폴더"
 python japan_review.py "프로젝트폴더" --cpm 300     ← TTS가 느리면 분당 글자수 조정
 python japan_review.py "프로젝트폴더" --no-open     ← 리포트를 자동으로 열지 않음
 ```
+
+---
+
+# 브루(Vrew) 자동화 스킬 (skills 폴더)
+
+- `skills/vrew-auto/` — **한국 채널용 원본 스킬** (컴퓨터의 `C:\Users\louki\.claude\skills\vrew-auto\` 백업본)
+- `skills/vrew-auto-jp/` — **일본 채널용 스킬** (한국판을 일본어 기준으로 개조한 버전)
+
+## 일본판 스킬 설치 (딱 한 번)
+
+⊞ Windows 키 + R을 누르고 아래 한 줄을 통째로 붙여넣은 뒤 Enter:
+
+```
+powershell -c "New-Item -ItemType Directory -Force 'C:\Users\louki\.claude\skills\vrew-auto-jp' | Out-Null; iwr 'https://raw.githubusercontent.com/goldlucky7/Progream/refs/heads/claude/bruja-automation-japan-support-q8ui3r/skills/vrew-auto-jp/SKILL.md' -OutFile 'C:\Users\louki\.claude\skills\vrew-auto-jp\SKILL.md'; Write-Host '설치 완료!'"
+```
+
+설치 후 Claude에게 **"일본 브루 처리해줘"** 라고 말하면 일본판 파이프라인이 실행됩니다.
+처음 실행할 때 일본 채널용 폴더 3개(브루 파일 폴더 · 대본 출력 폴더 · 그림 폴더)를 물어보고
+스킬이 스스로 경로를 기억합니다.
