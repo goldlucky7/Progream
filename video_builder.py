@@ -420,7 +420,8 @@ def detect_speakers(scene_texts):
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
-def run(project_dir):
+def run(project_dir, voice_arg=None, speed_arg=None, draft_dir_arg=None):
+    """voice_arg/speed_arg를 주면 메뉴 없이 바로 실행된다 (클로드가 대신 실행할 때 사용)."""
     project_dir = Path(project_dir).expanduser()
     if not project_dir.is_dir():
         print(f"폴더를 찾을 수 없습니다: {project_dir}")
@@ -471,13 +472,29 @@ def run(project_dir):
     cfg = load_config()
     speakers = detect_speakers(scene_texts)
     voice = voice_b = None
-    if speakers:
+    valid_names = {n.lower(): n for n, _ in VOICES}
+    if voice_arg:
+        if voice_arg.lower() not in valid_names:
+            print(f"'{voice_arg}'는 없는 목소리입니다. 가능한 이름: "
+                  + ", ".join(n for n, _ in VOICES))
+            return 1
+        voice = valid_names[voice_arg.lower()]
+        if speakers:
+            voice_b = cfg.get("voice_b") or voice
+            print(f"2인 대화 대본: {speakers[0]}={voice}, {speakers[1]}={voice_b}")
+    elif speakers:
         print(f"\n2인 대화 대본으로 보입니다 (화자: {speakers[0]}, {speakers[1]})")
         voice = choose_voice(cfg, f"'{speakers[0]}' 역할 목소리는?", "voice")
         voice_b = choose_voice(cfg, f"'{speakers[1]}' 역할 목소리는?", "voice_b")
     else:
         voice = choose_voice(cfg)
-    speed = choose_speed(cfg)
+    if speed_arg:
+        if speed_arg not in [n for n, _s, _x in SPEEDS]:
+            print(f"속도는 {', '.join(n for n, _s, _x in SPEEDS)} 중 하나여야 합니다.")
+            return 1
+        speed = speed_arg
+    else:
+        speed = choose_speed(cfg)
     cfg.update({"voice": voice, "speed": speed})
     if voice_b:
         cfg["voice_b"] = voice_b
@@ -553,8 +570,13 @@ def run(project_dir):
 
     # 캡컷 초안
     print()
-    draft_dir = find_capcut_draft_dir(cfg)
-    if draft_dir is None:
+    if draft_dir_arg and Path(draft_dir_arg).is_dir():
+        draft_dir = Path(draft_dir_arg)
+        cfg["capcut_draft_dir"] = str(draft_dir)
+        save_config(cfg)
+    else:
+        draft_dir = find_capcut_draft_dir(cfg)
+    if draft_dir is None and not voice_arg:   # 메뉴 모드에서만 경로를 물어봄
         print("캡컷 초안 폴더를 자동으로 찾지 못했습니다.")
         print("캡컷 → 설정 → '초안 위치'에 나온 경로를 붙여넣어 주세요.")
         raw = input("초안 폴더 경로 (건너뛰려면 그냥 Enter): ").strip().strip('"')
@@ -586,10 +608,14 @@ def run(project_dir):
 def main():
     parser = argparse.ArgumentParser(description="제미나이 TTS + 캡컷 자동배치")
     parser.add_argument("folder", nargs="?", help="프로젝트 폴더")
+    parser.add_argument("--voice", help="목소리 이름 (주면 메뉴 없이 실행, 예: Gacrux)")
+    parser.add_argument("--speed", help="속도: 느리게/보통/빠르게")
+    parser.add_argument("--draft-dir", help="캡컷 초안 폴더 경로 직접 지정")
     args = parser.parse_args()
     folder = args.folder or input(
         "프로젝트 폴더(대본+씬매핑+이미지) 경로를 붙여넣고 Enter: ").strip().strip('"')
-    sys.exit(run(folder))
+    sys.exit(run(folder, voice_arg=args.voice, speed_arg=args.speed,
+                 draft_dir_arg=args.draft_dir))
 
 
 if __name__ == "__main__":
