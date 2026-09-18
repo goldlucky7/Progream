@@ -199,7 +199,7 @@ button.tile.trash::after{
 .tagBanner button{background:var(--accent); color:var(--accent-ink); font-weight:800; padding:7px 14px; border-radius:9px; font-size:13px; flex:none}
 .themeTop{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px}
 .themeTop h2{font-size:18px; font-weight:800}
-.themeTop div{display:flex; gap:6px}
+.themeTop div{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
 .miniBtn{padding:7px 11px; border-radius:9px; background:var(--chip); font-size:12.5px; font-weight:700}
 .miniBtn.acc{background:var(--accent); color:var(--accent-ink)}
 .miniBtn.dgr{background:var(--danger-soft); color:var(--danger)}
@@ -412,7 +412,7 @@ nav#tabbar{
       <div class="hero">
         <div class="art" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         <h2>뒤죽박죽 갤러리,<br>여기서 한번에 정리해요</h2>
-        <p>사진을 불러오면 날짜별·테마별로 자동으로 모아 주고, 중복·흐릿한 사진처럼 정리할 사진을 찾아 드려요.</p>
+        <p>사진을 불러오면 날짜별·폴더별로 자동으로 모아 주고, 중복·흐릿한 사진처럼 정리할 사진을 찾아 드려요.</p>
         <div class="privacy">
           <span aria-hidden="true">🔒</span>
           <span><b>사진은 휴대폰 밖으로 나가지 않아요.</b> 업로드 없이 기기 안에서만 처리되고, 정리한 내용은 이 휴대폰 브라우저에 자동 저장돼 다음에 열어도 그대로예요.</span>
@@ -433,9 +433,9 @@ nav#tabbar{
       </div>
       <div class="featList">
         <div class="feat"><div class="fIcon">📅</div><b>날짜별 모음</b><span>년·월·일로 자동 정렬된 사진첩</span></div>
-        <div class="feat"><div class="fIcon">🏷️</div><b>테마별 모음</b><span>음식·여행·인물… 눌러서 착착 분류</span></div>
+        <div class="feat"><div class="fIcon">🏷️</div><b>폴더별 모음</b><span>원하는 폴더 만들어 착착 분류</span></div>
         <div class="feat"><div class="fIcon">🧹</div><b>정리할 사진</b><span>중복·흐릿·스크린샷 자동 감지</span></div>
-        <div class="feat"><div class="fIcon">🔍</div><b>쉬운 검색</b><span>날짜·테마·이름으로 바로 찾기</span></div>
+        <div class="feat"><div class="fIcon">🔍</div><b>쉬운 검색</b><span>날짜·폴더·이름으로 바로 찾기</span></div>
       </div>
     </div>
     <div class="chips" id="monthChips" hidden></div>
@@ -446,7 +446,7 @@ nav#tabbar{
   <section data-tab="themes" id="tab-themes" hidden>
     <div class="chips" id="themeChips"></div>
     <div class="addRow">
-      <input id="newThemeName" type="text" maxlength="12" placeholder="새 테마 이름 (예: 아이 사진)">
+      <input id="newThemeName" type="text" maxlength="12" placeholder="새 폴더 이름 (예: 아이 사진)">
       <button id="btnAddTheme">추가</button>
     </div>
     <div id="themeBody"></div>
@@ -462,11 +462,11 @@ nav#tabbar{
   <section data-tab="search" id="tab-search" hidden>
     <div class="searchBox">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="q" type="search" placeholder="파일명 · 테마 · 날짜(예: 2025, 8월)">
+      <input id="q" type="search" placeholder="파일명 · 폴더 · 날짜(예: 2025, 8월)">
     </div>
     <p class="fLabel">종류</p>
     <div class="chips" id="typeChips"></div>
-    <p class="fLabel">테마</p>
+    <p class="fLabel">폴더</p>
     <div class="chips" id="sThemeChips"></div>
     <p class="fLabel">연도</p>
     <div class="chips" id="yearChips"></div>
@@ -492,7 +492,7 @@ nav#tabbar{
 
 <div id="selBar" hidden>
   <b id="selCount">0장 선택</b>
-  <button id="selTheme">테마</button>
+  <button id="selTheme">폴더</button>
   <button id="selFav">♥ 즐겨찾기</button>
   <button id="selTrash" class="dgr">정리함</button>
   <button id="selCancel">취소</button>
@@ -505,7 +505,7 @@ nav#tabbar{
   </button>
   <button data-go="themes" aria-selected="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l7-3 11 4-7 3z"/><path d="M3 6v12l7 3V9"/><path d="M21 7v12l-11 4"/></svg>
-    테마
+    폴더
   </button>
   <button data-go="clean" aria-selected="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21c1-5 3-7 6-9M14 4l6 6-7.5 7.5c-1.7 1.7-4.3 1.7-6 0l0 0c-1.7-1.7-1.7-4.3 0-6z"/><path d="M12 6l6 6"/></svg>
@@ -532,7 +532,7 @@ nav#tabbar{
   <div class="vThemes" id="vThemes"></div>
   <div class="vBar">
     <button id="vFav"><span>♥</span>즐겨찾기</button>
-    <button id="vTheme"><span>🏷️</span>테마</button>
+    <button id="vTheme"><span>🏷️</span>폴더</button>
     <button id="vTrash"><span>🧹</span>정리함</button>
   </div>
 </div>
@@ -563,11 +563,11 @@ nav#tabbar{
 
 <div id="sheetDim" class="dim" hidden>
   <div class="sheet">
-    <h3 id="sheetTitle">테마 고르기</h3>
-    <p class="sub" id="sheetSub">이 사진을 담을 테마를 모두 선택하세요.</p>
+    <h3 id="sheetTitle">폴더 고르기</h3>
+    <p class="sub" id="sheetSub">이 사진을 담을 폴더를 모두 선택하세요.</p>
     <div class="sheetChips" id="sheetChips"></div>
     <div class="addRow">
-      <input id="sheetNewTheme" type="text" maxlength="12" placeholder="새 테마 이름">
+      <input id="sheetNewTheme" type="text" maxlength="12" placeholder="새 폴더 이름">
       <button id="sheetAddTheme">추가</button>
     </div>
     <div class="sheetBtns">
@@ -989,6 +989,67 @@ async function zipEntries(file){
   }
   if (needNewer && !out.length) throw new Error("zip stream");
   return out;
+}
+
+// ZIP 만들기: 폴더의 원본 사진을 압축 없이 담아 '갤러리로 옮길 수 있는' 파일 생성
+const CRC_T = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+async function crc32Blob(blob){
+  let crc = 0xFFFFFFFF;
+  const STEP = 4194304;
+  for (let o = 0; o < blob.size; o += STEP) {
+    const u = new Uint8Array(await blob.slice(o, o + STEP).arrayBuffer());
+    for (let i = 0; i < u.length; i++) crc = CRC_T[(crc ^ u[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function dosDT(ms){
+  const d = new Date(ms || Date.now());
+  const yy = Math.max(1980, d.getFullYear());
+  return [(((yy - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF,
+          ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF];
+}
+async function buildZip(entries, onProg){
+  const enc = new TextEncoder();
+  const parts = [], cds = [];
+  let off = 0, done = 0;
+  for (const e of entries) {
+    const nameB = enc.encode(e.name);
+    const crc = await crc32Blob(e.blob);
+    const [dd, dt] = dosDT(e.ms);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(8, 0, true); lh.setUint16(10, dt, true); lh.setUint16(12, dd, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, e.blob.size, true); lh.setUint32(22, e.blob.size, true);
+    lh.setUint16(26, nameB.length, true); lh.setUint16(28, 0, true);
+    parts.push(lh.buffer, nameB, e.blob);
+    cds.push({ nameB, crc, size: e.blob.size, dd, dt, off });
+    off += 30 + nameB.length + e.blob.size;
+    done++;
+    if (onProg) onProg(done, entries.length);
+    await new Promise(r => setTimeout(r, 0));
+  }
+  let cdSize = 0;
+  const cdStart = off;
+  for (const c of cds) {
+    const h = new DataView(new ArrayBuffer(46));
+    h.setUint32(0, 0x02014b50, true); h.setUint16(4, 20, true); h.setUint16(6, 20, true);
+    h.setUint16(8, 0x0800, true); h.setUint16(10, 0, true);
+    h.setUint16(12, c.dt, true); h.setUint16(14, c.dd, true); h.setUint32(16, c.crc, true);
+    h.setUint32(20, c.size, true); h.setUint32(24, c.size, true);
+    h.setUint16(28, c.nameB.length, true); h.setUint32(42, c.off, true);
+    parts.push(h.buffer, c.nameB);
+    cdSize += 46 + c.nameB.length;
+  }
+  const eo = new DataView(new ArrayBuffer(22));
+  eo.setUint32(0, 0x06054b50, true);
+  eo.setUint16(8, cds.length, true); eo.setUint16(10, cds.length, true);
+  eo.setUint32(12, cdSize, true); eo.setUint32(16, cdStart, true);
+  parts.push(eo.buffer);
+  return new Blob(parts, { type: "application/zip" });
 }
 
 // 고른 파일 목록에서 ZIP은 풀어서, 나머지는 사진·동영상만 남긴다
@@ -1453,7 +1514,7 @@ function renderThemes(){
     ).join("");
 
   if (state.curTheme === null) {
-    let html = '<p class="cleanIntro">테마를 눌러 사진을 모아 보세요. 스크린샷·동영상' + (state.faceOK ? "·인물" : "") + "은 자동으로 분류돼요.</p>";
+    let html = '<p class="cleanIntro">폴더를 눌러 사진을 모아 보세요. 위 입력칸에서 새 폴더도 만들 수 있어요. 스크린샷·동영상' + (state.faceOK ? "·인물" : "") + "은 자동으로 분류돼요.</p>";
     html += '<div class="themeCards">';
     for (const [t, c] of withCnt) {
       const cov = coverOf(t);
@@ -1472,10 +1533,11 @@ function renderThemes(){
   const tagging = state.tagTheme === t;
   let html = '<div class="themeTop"><h2>' + esc(t) + " · " + ids.length + "장</h2><div>" +
     '<button class="miniBtn acc" data-tagmode="' + esc(t) + '">' + (tagging ? "담기 끝내기" : "＋ 사진 담기") + "</button>" +
-    (state.customThemes.includes(t) ? '<button class="miniBtn dgr" data-delTheme="' + esc(t) + '">테마 삭제</button>' : "") +
+    (ids.length ? '<button class="miniBtn" data-exportzip="' + esc(t) + '">📥 휴대폰에 저장</button>' : "") +
+    (state.customThemes.includes(t) ? '<button class="miniBtn dgr" data-delTheme="' + esc(t) + '">폴더 삭제</button>' : "") +
     "</div></div>";
   if (tagging) {
-    html += '<div class="tagBanner"><span>아래에서 사진을 누르면 <b>' + esc(t) + "</b> 테마에 담기거나 빠져요.</span>" +
+    html += '<div class="tagBanner"><span>아래에서 사진을 누르면 <b>' + esc(t) + "</b> 폴더에 담기거나 빠져요.</span>" +
       '<button data-tagdone="1">완료</button></div>';
     const others = state.order.filter(id => !themesOf(state.byId.get(id)).includes(t));
     html += '<p class="dayLabel">이 테마에 담긴 사진</p><div class="grid">' + ids.map(id => tileHTML(state.byId.get(id), "ck")).join("") + "</div>";
@@ -1484,7 +1546,7 @@ function renderThemes(){
   } else {
     html += ids.length
       ? '<div class="grid">' + ids.map(id => tileHTML(state.byId.get(id))).join("") + "</div>"
-      : '<p class="noRes">아직 이 테마에 담긴 사진이 없어요.<br>"＋ 사진 담기"를 눌러 골라 보세요.</p>';
+      : '<p class="noRes">아직 이 폴더에 담긴 사진이 없어요.<br>"＋ 사진 담기"를 눌러 골라 보세요.</p>';
     state.lists.theme = ids;
   }
   body.innerHTML = html;
@@ -1707,7 +1769,7 @@ function viewerRender(){
   const th = themesOf(p);
   $("#vThemes").innerHTML = th.length
     ? th.map(t => '<span class="chip">' + esc(t) + "</span>").join("")
-    : '<span class="chip" style="opacity:.55">테마 없음</span>';
+    : '<span class="chip" style="opacity:.55">폴더 없음</span>';
   $("#vFav").classList.toggle("on", p.fav);
   $("#vTrash").classList.toggle("onT", p.trash);
   $("#vTrash").lastChild.textContent = p.trash ? "정리 취소" : "정리함";
@@ -1728,8 +1790,8 @@ function sheetOpen(ids){
   const lists = ids.map(id => themesOf(state.byId.get(id)));
   sheetInitial = new Set(lists[0].filter(t => lists.every(l => l.includes(t))));
   sheetPending = new Set(sheetInitial);
-  $("#sheetTitle").textContent = ids.length > 1 ? ids.length + "장의 테마 고르기" : "테마 고르기";
-  $("#sheetSub").textContent = "선택한 테마에 사진이 담겨요. 여러 개도 좋아요.";
+  $("#sheetTitle").textContent = ids.length > 1 ? ids.length + "장 담을 폴더 고르기" : "폴더 고르기";
+  $("#sheetSub").textContent = "선택한 폴더에 사진이 담겨요. 여러 개도 좋아요.";
   sheetRenderChips();
   $("#sheetDim").hidden = false;
 }
@@ -1745,8 +1807,68 @@ function sheetApply(){
     for (const t of sheetInitial) if (!sheetPending.has(t) && themesOf(p).includes(t)) toggleThemeOn(p, t);
   }
   $("#sheetDim").hidden = true;
-  toast("테마를 적용했어요");
+  toast("폴더에 반영했어요");
   if (!$("#viewer").hidden) viewerRender(); else render();
+}
+
+/* ---------- 폴더를 휴대폰 갤러리용 ZIP으로 저장 ---------- */
+async function exportFolderZip(t){
+  if (state.importing) return;
+  const ps = state.photos.filter(p => !p.trash && themesOf(p).includes(t));
+  const withFile = ps.filter(p => p.file);
+  const miss = ps.length - withFile.length;
+  if (!withFile.length) {
+    toast("원본이 연결된 사진이 없어요 · [사진 추가]로 같은 사진을 다시 불러오면 저장할 수 있어요", 6000);
+    return;
+  }
+  const total = withFile.reduce((a, p) => a + p.size, 0);
+  if (total > 3800000000 || withFile.length > 60000) {
+    toast("폴더가 너무 커요(4GB 이상) · 폴더를 나눠서 저장해 주세요", 6000);
+    return;
+  }
+  const bar = $("#importBar"), fill = $("#importFill");
+  $("#importLabel").textContent = '"' + t + '" 폴더를 갤러리용 파일로 만드는 중…';
+  $("#importCount").textContent = "0 / " + withFile.length;
+  fill.classList.remove("indet"); fill.style.width = "0%";
+  bar.hidden = false;
+  try {
+    const seen = new Set();
+    const entries = withFile.map(p => {
+      let n = p.name, i = 1;
+      while (seen.has(n)) {
+        const m = /^(.*?)(\.[^.]*)?$/.exec(p.name);
+        n = m[1] + " (" + (i++) + ")" + (m[2] || "");
+      }
+      seen.add(n);
+      return { name: n, blob: p.file, ms: p.date };
+    });
+    const zip = await buildZip(entries, (d, n) => {
+      $("#importCount").textContent = d + " / " + n;
+      fill.style.width = Math.round(d / n * 100) + "%";
+    });
+    const safe = t.replace(/[\\/:*?"<>|]/g, "_");
+    const url = URL.createObjectURL(zip);
+    const a = document.createElement("a");
+    a.href = url; a.download = safe + ".zip";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch(e){} }, 120000);
+    openTextModal(
+      "휴대폰 갤러리에 폴더 만들기",
+      '"' + safe + '.zip" 다운로드를 시작했어요 (' + withFile.length + "장 · " + fmtSize(zip.size) + (miss ? " · 원본 미연결 " + miss + "장은 제외" : "") + "). 이어서 아래 순서대로 하면 갤러리에 진짜 폴더가 생겨요!",
+      "1. 「내 파일」 앱 열기 → 다운로드 폴더\n" +
+      "2. " + safe + ".zip 을 눌러 「압축 해제」\n" +
+      "3. 끝! 갤러리 앱 → 앨범 목록에 「" + safe + "」 폴더가 나타나요.\n\n" +
+      "· 사진은 복사본이에요 — 원본(Camera)은 그대로 있어요.\n" +
+      "· 촬영 정보(EXIF)도 원본 그대로 들어 있어요.\n" +
+      "· 확인이 끝나면 zip 파일은 지워도 돼요.\n" +
+      "· 다운로드가 안 보이면 크롬 주소창의 goldlucky7.github.io 주소에서 다시 해주세요.",
+      null, { copy: false });
+  } catch(err){
+    toast("파일 만들기에 실패했어요 · 폴더의 사진 수를 줄여 다시 해보세요", 6000);
+  } finally {
+    if (!state.importing) bar.hidden = true;
+    fill.style.width = "0%";
+  }
 }
 
 /* ---------- 선택 모드 ---------- */
@@ -1926,6 +2048,8 @@ function bindEvents(){
       renderThemes(); return;
     }
     if (t.closest("[data-tagdone]")) { stopTagMode(); return; }
+    const exZip = t.closest("[data-exportzip]");
+    if (exZip) { exportFolderZip(exZip.dataset.exportzip); return; }
     const delTheme = t.closest("[data-delTheme]");
     if (delTheme) {
       const th = delTheme.dataset.deltheme;
@@ -1933,7 +2057,7 @@ function bindEvents(){
       lsSet("po.customThemes", JSON.stringify(state.customThemes));
       for (const p of state.photos) if (p.manT.has(th)) { p.manT.delete(th); idbSave(p); }
       state.curTheme = null; state.tagTheme = null;
-      toast("테마를 삭제했어요 (사진은 그대로예요)");
+      toast("폴더를 삭제했어요 (사진은 그대로예요)");
       renderThemes(); return;
     }
 
@@ -2094,7 +2218,7 @@ function bindEvents(){
     }
     inputEl.value = "";
     if (select) { sheetPending.add(name); sheetRenderChips(); }
-    else { state.curTheme = name; renderThemes(); toast('"' + name + '" 테마를 만들었어요'); }
+    else { state.curTheme = name; renderThemes(); toast('"' + name + '" 폴더를 만들었어요'); }
   };
   $("#btnAddTheme").addEventListener("click", () => addTheme($("#newThemeName"), false));
   $("#newThemeName").addEventListener("keydown", (e) => { if (e.key === "Enter") addTheme($("#newThemeName"), false); });
