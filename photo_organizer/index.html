@@ -664,11 +664,12 @@ let idb = null;
 function idbOpen(){
   return new Promise((res) => {
     try {
-      const rq = indexedDB.open("photo-organizer", 2);
+      const rq = indexedDB.open("photo-organizer", 3);
       rq.onupgradeneeded = () => {
         const d = rq.result;
         if (!d.objectStoreNames.contains("records")) d.createObjectStore("records");
         if (!d.objectStoreNames.contains("photos")) d.createObjectStore("photos");
+        if (!d.objectStoreNames.contains("originals")) d.createObjectStore("originals");
       };
       rq.onsuccess = () => res(rq.result);
       rq.onerror = () => res(null);
@@ -700,9 +701,10 @@ function idbSave(p){
 function idbClearAll(){
   if (!idb) return;
   try {
-    const tx = idb.transaction(["records", "photos"], "readwrite");
+    const tx = idb.transaction(["records", "photos", "originals"], "readwrite");
     tx.objectStore("records").clear();
     tx.objectStore("photos").clear();
+    tx.objectStore("originals").clear();
   } catch(e){}
   savedRecs = new Map();
 }
@@ -739,10 +741,34 @@ function idbLoadPhotos(){
 function idbDeletePhoto(key){
   if (!idb) return;
   try {
-    const tx = idb.transaction(["photos", "records"], "readwrite");
+    const tx = idb.transaction(["photos", "records", "originals"], "readwrite");
     tx.objectStore("photos").delete(key);
     tx.objectStore("records").delete(key);
+    tx.objectStore("originals").delete(key);
   } catch(e){}
+}
+
+/* 폴더에 담은 사진은 원본 파일까지 보관 → 앱을 다시 열어도 [휴대폰에 저장] 가능 */
+function idbSaveOriginal(p){
+  if (!idb || p.sample || !p.file || p.size > 262144000) return;
+  try {
+    const rq = idb.transaction("originals", "readwrite").objectStore("originals").put(p.file, recKey(p));
+    rq.onerror = () => { cacheOK = false; };
+  } catch(e){ cacheOK = false; }
+}
+function idbDeleteOriginal(key){
+  if (!idb) return;
+  try { idb.transaction("originals", "readwrite").objectStore("originals").delete(key); } catch(e){}
+}
+function idbGetOriginal(key){
+  return new Promise((res) => {
+    if (!idb) return res(null);
+    try {
+      const rq = idb.transaction("originals", "readonly").objectStore("originals").get(key);
+      rq.onsuccess = () => res(rq.result || null);
+      rq.onerror = () => res(null);
+    } catch(e){ res(null); }
+  });
 }
 function restoreRec(p){
   const r = savedRecs.get(recKey(p));
@@ -1165,7 +1191,11 @@ async function importFiles(fileList, opts){
       if (exist) {
         // 이미 저장된 사진: 원본 파일만 다시 연결
         if (!exist.file) {
-          try { exist.file = raw.lazy ? await raw.lazy() : raw; relink++; } catch(e){}
+          try {
+            exist.file = raw.lazy ? await raw.lazy() : raw;
+            relink++;
+            if (exist.manT.size) idbSaveOriginal(exist);
+          } catch(e){}
         }
         tick(); continue;
       }
@@ -1189,6 +1219,7 @@ async function importFiles(fileList, opts){
       if (opts && opts.themes && opts.themes[p.name]) for (const t of opts.themes[p.name]) p.manT.add(t);
       idbSavePhoto(p, p._tb || null);
       delete p._tb;
+      if (p.manT.size) idbSaveOriginal(p);
       state.photos.push(p);
       state.byId.set(p.id, p);
       news.push(p);
@@ -1563,6 +1594,8 @@ function toggleThemeOn(p, t){
   if (on) { if (isAuto) p.noAuto.add(t); p.manT.delete(t); }
   else { if (isAuto) p.noAuto.delete(t); else p.manT.add(t); }
   idbSave(p);
+  if (p.manT.size) idbSaveOriginal(p);
+  else idbDeleteOriginal(recKey(p));
 }
 
 /* ---------- 정리 ---------- */
@@ -1724,6 +1757,13 @@ function viewerClose(){
 function viewerRender(){
   const p = state.byId.get(state.viewerList[state.viewerIdx]);
   if (!p) return viewerClose();
+  if (!p.file && !p._origTried) {
+    p._origTried = true;
+    idbGetOriginal(recKey(p)).then((b) => {
+      if (b && !$("#viewer").hidden && state.viewerList[state.viewerIdx] === p.id) { p.file = b; viewerRender(); }
+      else if (b) p.file = b;
+    });
+  }
   const st = $("#vStage");
   for (const el of st.querySelectorAll("img,video,.vErr,.vHint")) el.remove();
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
@@ -1815,10 +1855,17 @@ function sheetApply(){
 async function exportFolderZip(t){
   if (state.importing) return;
   const ps = state.photos.filter(p => !p.trash && themesOf(p).includes(t));
+  // 앱을 껐다 켜서 연결이 끊긴 사진은 보관해 둔 원본으로 자동 복구
+  for (const p of ps) {
+    if (!p.file) {
+      const b = await idbGetOriginal(recKey(p));
+      if (b) p.file = b;
+    }
+  }
   const withFile = ps.filter(p => p.file);
   const miss = ps.length - withFile.length;
   if (!withFile.length) {
-    toast("원본이 연결된 사진이 없어요 · [사진 추가]로 같은 사진을 다시 불러오면 저장할 수 있어요", 6000);
+    toast("원본이 연결된 사진이 없어요 · [사진 추가]→[폴더째 불러오기]로 한 번 다시 불러오면 저장돼요 (다음부터는 폴더에 담긴 사진 원본을 앱이 보관해요)", 6000);
     return;
   }
   const total = withFile.reduce((a, p) => a + p.size, 0);
@@ -2273,6 +2320,7 @@ function bindEvents(){
         if (p) {
           p.manT = new Set(r.manT || []); p.noAuto = new Set(r.noAuto || []);
           p.fav = !!r.fav; p.trash = !!r.trash;
+          if (p.manT.size && p.file) idbSaveOriginal(p);
         }
       }
       render();
