@@ -69,6 +69,8 @@ h1,h2,h3,p{margin:0}
 #importBar .row b{font-variant-numeric:tabular-nums}
 .track{height:6px; border-radius:3px; background:var(--surface2); overflow:hidden}
 #importFill{height:100%; width:0%; background:var(--accent); border-radius:3px; transition:width .2s}
+@keyframes indetSlide{0%{margin-left:0}50%{margin-left:82%}100%{margin-left:0}}
+#importFill.indet{width:18%; animation:indetSlide 1.8s ease-in-out infinite; transition:none}
 
 /* ---------- layout ---------- */
 main{padding:0 16px calc(88px + env(safe-area-inset-bottom,0px))}
@@ -1774,7 +1776,8 @@ const BULK_HELP =
 "1. 첫 화면(또는 사진 추가)의 [📁 폴더째 불러오기]를 누르세요.\n" +
 "2. '폴더 고르는 화면'이 뜨면 내장 저장공간 → DCIM → Camera\n" +
 "   폴더를 고르고 「이 폴더 사용(허용)」을 누르세요.\n" +
-"3. 폴더 안 사진이 500장 제한 없이 전부 들어와요!\n" +
+"3. 「업로드 허용」 창이 나오면 허용! 그 뒤에도 몇 분간\n" +
+"   조용할 수 있어요. 화면 켠 채 기다리면 진행 막대가 떠요.\n" +
 "   ※ 폰에 따라 이 기능이 안 되고 그냥 파일 고르는 화면이\n" +
 "   뜨기도 해요. 그러면 아래 방법으로 하세요.\n\n" +
 "📱 2순위: 꾹 누른 채 문지르기 (확실한 방법)\n" +
@@ -1850,11 +1853,11 @@ async function copyText(t){
   } catch(e){ return false; }
 }
 let toastTimer = null;
-function toast(msg){
+function toast(msg, ms){
   const el = $("#toast");
   el.textContent = msg; el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2400);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms || 2400);
 }
 
 /* ---------- 이벤트 ---------- */
@@ -2003,30 +2006,39 @@ function bindEvents(){
   $("#fileIn").addEventListener("change", onFiles);
   $("#fileIn2").addEventListener("change", onFiles);
   $("#allIn").addEventListener("change", onFiles);
-  /* 폴더째 불러오기: 오래 걸리거나 미지원일 때 상황을 알려줌 */
-  let dirPickAt = 0, dirGot = false, dirWaitTimer = null;
+  /* 폴더째 불러오기: 목록 만드는 동안(수 분) 상단 막대를 계속 표시 */
+  let dirPickAt = 0, dirGot = false;
+  const showDirWait = () => {
+    $("#importLabel").textContent = "휴대폰이 사진 목록을 만드는 중… 수천 장이면 2~5분 걸려요. 화면을 끄지 마세요!";
+    $("#importCount").textContent = "기다려 주세요";
+    const f = $("#importFill");
+    f.classList.add("indet");
+    $("#importBar").hidden = false;
+  };
+  const hideDirWait = () => {
+    $("#importFill").classList.remove("indet");
+    if (!state.importing) $("#importBar").hidden = true;
+  };
   $("#dirIn").addEventListener("click", () => {
     dirPickAt = Date.now(); dirGot = false;
     addDim.hidden = true;
   });
   window.addEventListener("focus", () => {
-    if (!dirPickAt) return;
-    clearTimeout(dirWaitTimer);
-    dirWaitTimer = setTimeout(() => {
-      if (!dirGot && dirPickAt) {
-        toast("사진이 많으면 폴더를 읽는 데 2~3분 걸려요 · 화면을 끄지 말고 기다려 주세요. 계속 반응이 없으면 이 폰은 폴더 불러오기가 안 되는 거예요 → [파일 앱에서 골라 담기]로!");
-      }
-    }, 10000);
+    if (dirPickAt && !dirGot) showDirWait();
+  });
+  document.addEventListener("click", () => {
+    // 폴더 선택을 취소하고 돌아와 화면을 만지면 대기 막대 정리
+    if (dirPickAt && !dirGot && Date.now() - dirPickAt > 4000) { dirPickAt = 0; hideDirWait(); }
   });
   $("#dirIn").addEventListener("change", (e) => {
-    dirGot = true; dirPickAt = 0; clearTimeout(dirWaitTimer);
+    dirGot = true; dirPickAt = 0; hideDirWait();
     const n = e.target.files ? e.target.files.length : 0;
     if (!n) {
-      toast("폴더에서 파일을 받지 못했어요 · 이 폰은 폴더 불러오기를 지원하지 않네요 → [파일 앱에서 골라 담기]로 해주세요");
+      toast("폴더에서 파일을 받지 못했어요 · 이 폰(브라우저)은 폴더 불러오기를 지원하지 않네요 → [파일 앱에서 골라 담기]로 해주세요", 6000);
       e.target.value = "";
       return;
     }
-    toast("폴더에서 " + n + "개를 받았어요 · 사진만 골라 불러오는 중…");
+    toast("폴더에서 " + n + "개를 받았어요 · 사진만 골라 불러오기 시작!", 5000);
     handlePicked(e.target.files, "폴더에서 사진·동영상을 찾지 못했어요");
     e.target.value = "";
   });
