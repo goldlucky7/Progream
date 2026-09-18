@@ -2472,7 +2472,7 @@ const NAT = (() => {
 })();
 window.NativeBridge = NAT; // 존재 여부로 네이티브 모드 판별 (인수인계 규약)
 
-const natState = { access: null, syncing: false, analyzing: false };
+const natState = { access: null, syncing: false, analyzing: false, albuming: false, deleting: false };
 let natAnaCache = new Map();   // recKey → 지난 실행 분석 결과 (IndexedDB photos 스토어)
 const natRef = (p) => p.nat.mt + ":" + p.nat.id;
 
@@ -2481,13 +2481,16 @@ async function natSync(byUser){
   if (!NAT || natState.syncing || state.importing) return;
   natState.syncing = true;
   const bar = $("#importBar"), fill = $("#importFill");
+  const wantAsk = byUser === true || byUser === "more";
   try {
     let acc = await NAT.call("access");
     if (!acc.granted && byUser !== "quiet") acc = await NAT.call("request");
+    // '일부 사진만 허용' 상태에서 사용자가 버튼을 눌렀다면 → 더 고르기/전체 허용 창 다시 열기
+    else if (acc.granted && acc.partial && wantAsk) acc = await NAT.call("request");
     natState.access = acc;
     natRenderHero();
     if (!acc.granted) {
-      if (byUser === true) toast("사진 접근을 허용해야 갤러리를 볼 수 있어요", 5000);
+      if (wantAsk) toast("사진 접근을 허용해야 갤러리를 볼 수 있어요", 5000);
       return;
     }
     $("#importLabel").textContent = "갤러리를 읽는 중… (기기 안에서만 처리돼요)";
@@ -2504,8 +2507,9 @@ async function natSync(byUser){
       seen.add(k);
       const exist = state.byKey.get(k);
       if (exist) {
+        // 갤러리 휴지통 복원 등으로 id가 바뀌었을 수 있으니 주소를 항상 새로 계산
         exist.nat = { id: it.id, mt: it.mt };
-        if (!exist.thumb) exist.thumb = NAT.thumbUrl(exist);
+        exist.thumb = NAT.thumbUrl(exist);
         continue;
       }
       const p = {
@@ -2536,14 +2540,20 @@ async function natSync(byUser){
       state.byKey.set(k, p);
       added++;
     }
-    // 갤러리에서 지워진 사진은 목록에서도 뺀다 (갤러리가 원본)
-    const gone = state.photos.filter(p => !p.sample && !p.file && !seen.has(recKey(p)));
-    if (gone.length) removePhotos(gone);
+    // 갤러리에서 지워진 사진은 목록에서도 뺀다 (갤러리가 원본).
+    // 단 '일부 사진만 허용' 상태에서는 목록에 없다 = 선택이 안 된 것일 수 있으므로
+    // 기록(폴더·정리함)을 지우지 않고 그대로 둔다.
+    let gone = [];
+    if (!acc.partial) {
+      gone = state.photos.filter(p => !p.sample && !p.file && !seen.has(recKey(p)));
+      if (gone.length) removePhotos(gone);   // 내부에서 computeDupes까지 수행
+    }
     fill.classList.remove("indet");
     bar.hidden = true;
-    rebuild(); computeDupes(); render();
+    if (!gone.length) computeDupes();
+    rebuild(); render();
     natRenderHero();
-    if (byUser === true) {
+    if (wantAsk) {
       const parts = [];
       if (added) parts.push(added + "장을 새로 읽었어요");
       if (gone.length) parts.push("갤러리에서 지워진 " + gone.length + "장을 뺐어요");
@@ -2551,7 +2561,7 @@ async function natSync(byUser){
     }
     natAnalyzeAll();
   } catch(e){
-    toast("갤러리를 읽지 못했어요 · 앱을 껐다 다시 켜 보세요", 5000);
+    if (wantAsk) toast("갤러리를 읽지 못했어요 · 앱을 껐다 다시 켜 보세요", 5000);
   } finally {
     natState.syncing = false;
     fill.classList.remove("indet");
@@ -2574,6 +2584,7 @@ async function natAnalyzeAll(){
   let done = 0;
   const total = todo.length;
   $("#importCount").textContent = "0 / " + total;
+  fill.style.width = "0%";
   const work = async () => {
     while (todo.length) {
       if (run !== natAnaRun) return;
@@ -2611,7 +2622,7 @@ async function natAnalyzeAll(){
 
 /* 폴더 → 갤러리에 진짜 앨범 만들기 (Pictures/<폴더명> 복사, 중복 저장 없음) */
 async function natCreateAlbum(t){
-  if (!NAT || state.importing || natState.syncing) return;
+  if (!NAT || state.importing || natState.syncing || natState.albuming) return;
   const all = state.photos.filter(p => !p.trash && themesOf(p).includes(t));
   const ps = all.filter(p => p.nat);
   const miss = all.length - ps.length;   // 샘플 사진 등
@@ -2619,6 +2630,7 @@ async function natCreateAlbum(t){
     toast("이 폴더에는 갤러리 사진이 없어요" + (miss ? " · 샘플 사진은 앨범으로 저장되지 않아요" : ""), 5000);
     return;
   }
+  natState.albuming = true;              // 더블탭 등으로 두 번 실행되는 것 방지
   const safe = t.replace(/[\\/:*?"<>|]/g, "_");
   natAnaRun++;                       // 진행 막대를 앨범 작업이 독점 (분석은 뒤에 다시 이어감)
   natState.analyzing = false;
@@ -2645,6 +2657,7 @@ async function natCreateAlbum(t){
   } catch(e){
     toast("앨범 만들기에 실패했어요 · 다시 해보세요", 5000);
   } finally {
+    natState.albuming = false;
     bar.hidden = true; fill.style.width = "0%";
     natAnalyzeAll();   // 멈춰 둔 사진 살펴보기 이어서
   }
@@ -2652,7 +2665,7 @@ async function natCreateAlbum(t){
 
 /* 정리함 → 갤러리에서 바로 삭제 (시스템 확인창 1번 → 휴지통 30일 보관) */
 async function natDeleteTrash(){
-  if (!NAT) return;
+  if (!NAT || natState.deleting) return;
   const ps = state.photos.filter(p => p.trash);
   const nats = ps.filter(p => p.nat);
   const rest = ps.filter(p => !p.nat);   // 샘플 등: 목록에서만 제거
@@ -2661,17 +2674,30 @@ async function natDeleteTrash(){
     else toast("정리함이 비어 있어요");
     return;
   }
+  natState.deleting = true;              // 더블탭 방지
   try {
-    const r = await NAT.call("delete", { refs: nats.map(natRef) });
-    if (r.done) {
-      removePhotos(nats.concat(rest));
-      state.cleanView = null;
-      render();
-      toast(r.count + "장을 갤러리에서 삭제했어요 · 실수했다면 갤러리 휴지통(30일 보관)에서 되살릴 수 있어요", 6000);
+    // 수천 장을 한 번에 요청하면 안드로이드 한계에 걸릴 수 있어 1500장씩 나눠서 진행
+    const CH = 1500;
+    const chunks = Math.ceil(nats.length / CH);
+    let deleted = 0, canceled = false;
+    for (let i = 0; i < nats.length && !canceled; i += CH) {
+      const part = nats.slice(i, i + CH);
+      if (chunks > 1) toast("사진이 많아 확인창이 " + chunks + "번 나와요 · 지금 " + (Math.floor(i / CH) + 1) + "번째", 4000);
+      const r = await NAT.call("delete", { refs: part.map(natRef) });
+      if (r.done) { removePhotos(part); deleted += r.count || part.length; }
+      else canceled = true;
+    }
+    if (rest.length && deleted) removePhotos(rest);
+    state.cleanView = null;
+    render();
+    if (deleted) {
+      toast(deleted + "장을 갤러리에서 삭제했어요 · 실수했다면 갤러리 휴지통(30일 보관)에서 되살릴 수 있어요"
+        + (canceled ? " · 나머지는 취소했어요" : ""), 6000);
     } else {
       toast("삭제를 취소했어요 · 사진은 그대로 있어요");
     }
   } catch(e){ toast("삭제하지 못했어요 · 다시 해보세요"); }
+  finally { natState.deleting = false; }
 }
 
 /* 네이티브 모드 UI 손질: 불러오기 버튼 숨기고 갤러리 버튼·배너 추가 */
@@ -2723,7 +2749,7 @@ document.addEventListener("click", (e) => {
   if (!NAT) return;
   const t = e.target;
   if (t.closest("#natStart")) { natSync(true); return; }
-  if (t.closest("#natMore")) { natSync(true); return; }
+  if (t.closest("#natMore")) { natSync("more"); return; }
   if (t.closest("#natSettings")) { NAT.call("settings").catch(() => {}); return; }
   if (t.closest("#btnNatDelete") || t.closest("[data-natdelete]")) { natDeleteTrash(); return; }
 });

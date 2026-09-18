@@ -338,6 +338,14 @@ const URL = 'http://127.0.0.1:8901/index.html';
   check('nat album call refs', !!albumCall && albumCall[1].name === '테스트폴더' && albumCall[1].refs.length === 2 && albumCall[1].refs.includes('i:dup_1.jpg'), JSON.stringify(albumCall));
   await np.click('#modalClose');
 
+  // 더블탭 보호: 연속 두 번 눌러도 앨범 작업은 한 번만 실행
+  const albumsBefore = await np.evaluate(() => window.__mock.calls.filter(c => c[0] === 'album').length);
+  await np.evaluate(() => { natCreateAlbum('테스트폴더'); natCreateAlbum('테스트폴더'); });
+  await np.waitForSelector('#modalDim:not([hidden])', { timeout: 10000 });
+  await np.click('#modalClose');
+  await np.waitForTimeout(150);
+  check('nat album double-tap guarded', await np.evaluate(() => window.__mock.calls.filter(c => c[0] === 'album').length) === albumsBefore + 1);
+
   // 5) 정리함 → 갤러리에서 바로 삭제 (모의 시스템 확인창 승인)
   await np.evaluate(() => { ['dup_2.jpg', 'dark_1.jpg'].forEach(n => setTrash(state.photos.find(x => x.name === n), true)); });
   await np.click('#tabbar button[data-go="clean"]');
@@ -385,6 +393,11 @@ const URL = 'http://127.0.0.1:8901/index.html';
   await dp.waitForFunction(() => state.photos.length === 8, null, { timeout: 20000 });
   check('nat grant then load', true);
   check('nat partial banner', await dp.locator('#natPartial').isVisible());
+  // '전체 허용하기' 배너 버튼 → 시스템 사진 선택창(request)이 다시 열려야 함
+  const reqBefore = await dp.evaluate(() => window.__mock.calls.filter(c => c[0] === 'request').length);
+  await dp.click('#natMore');
+  await dp.waitForFunction((n) => window.__mock.calls.filter(c => c[0] === 'request').length > n, reqBefore, { timeout: 10000 });
+  check('nat partial re-request', true);
   await dctx.close();
 
   console.log('\n=== OK (' + R.ok.length + ') ===\n' + R.ok.join('\n'));

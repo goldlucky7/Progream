@@ -377,6 +377,11 @@ class MainActivity : ComponentActivity() {
 
     private fun doTrash(id: String, p: JSONObject) {
         try {
+            if (trashPending != null) {
+                // 시스템 확인창이 이미 떠 있음 — 중복 요청은 취소로 응답
+                done(id, true, JSONObject().put("done", false).put("count", 0))
+                return
+            }
             val refs = p.optJSONArray("refs") ?: JSONArray()
             val uris = ArrayList<Uri>()
             for (i in 0 until refs.length()) {
