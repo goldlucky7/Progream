@@ -115,6 +115,10 @@ section[data-tab]{padding-top:10px}
   display:inline-flex; justify-content:center; padding:12px; border-radius:12px; background:var(--chip);
   font-weight:700; font-size:14px;
 }
+.linkBtn{
+  display:block; margin:12px auto 0; font-size:13.5px; color:var(--accent); font-weight:700;
+  text-decoration:underline; text-underline-offset:3px;
+}
 .featList{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:18px}
 .feat{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px}
 .feat b{display:block; font-size:14px; margin-bottom:2px}
@@ -404,8 +408,13 @@ nav#tabbar{
             내 사진 불러오기
             <input id="fileIn2" type="file" accept="image/*,video/*" multiple hidden>
           </label>
+          <label class="btnSoft" id="dirLabel" for="dirIn" hidden>
+            폴더째 불러오기 (컴퓨터)
+            <input id="dirIn" type="file" webkitdirectory multiple hidden>
+          </label>
           <button id="btnSample" class="btnSoft">샘플 사진으로 구경하기</button>
         </div>
+        <button id="btnBulkHelp" class="linkBtn">📚 사진을 한 번에 왕창 선택하는 방법</button>
       </div>
       <div class="featList">
         <div class="feat"><div class="fIcon">📅</div><b>날짜별 모음</b><span>년·월·일로 자동 정렬된 사진첩</span></div>
@@ -448,6 +457,10 @@ nav#tabbar{
     <div class="chips" id="yearChips"></div>
     <p id="searchMeta"></p>
     <div class="grid" id="searchGrid"></div>
+    <p class="secTitle">도움말</p>
+    <div class="dataRow">
+      <button id="btnBulkHelp2">사진 한 번에 많이 불러오는 방법</button>
+    </div>
     <p class="secTitle">데이터 관리</p>
     <p class="detailNote">정리 내용은 이 기기 브라우저에 자동 저장돼요. 기기를 바꾸거나 브라우저 데이터를 지울 때를 대비해 가끔 백업해 두세요.</p>
     <div class="dataRow">
@@ -1600,13 +1613,38 @@ function toggleSelectMode(force){
 /* ---------- 삭제 목록 · 백업 · 알림 ---------- */
 let dlNS = null;                 // 파일 저장 기능 (지원 환경에서만)
 let modalPayload = null;         // {text, filename}
-function openTextModal(title, sub, text, filename){
-  modalPayload = { text, filename };
+function openTextModal(title, sub, text, filename, opts){
+  modalPayload = { text, filename: filename || null };
   $("#modalTitle").textContent = title;
   $("#modalSub").textContent = sub;
   $("#trashListText").textContent = text;
-  $("#btnSaveList").hidden = !dlNS;
+  $("#btnSaveList").hidden = !dlNS || !filename;
+  $("#btnCopyList").hidden = !!(opts && opts.copy === false);
   $("#modalDim").hidden = false;
+}
+const BULK_HELP =
+"📱 갤럭시 등 안드로이드에서 '모두 선택'하기\n" +
+"1. [사진 추가]를 눌러 선택 화면을 엽니다.\n" +
+"2. 갤러리 대신 「내 파일」(또는 '파일') 앱을 고르세요.\n" +
+"   (선택 화면 위쪽/옆의 ☰ 메뉴나 '찾아보기'에 있어요)\n" +
+"3. 내장 저장공간 → DCIM → Camera 폴더로 들어갑니다.\n" +
+"4. 오른쪽 위 ⋮ 메뉴 → 「모두 선택」 → 완료!\n" +
+"   (기종에 따라 메뉴 이름이 조금씩 달라요)\n\n" +
+"🍎 아이폰에서 빨리 여러 장 선택하기\n" +
+"사진 고르는 화면에서 손가락을 떼지 않고 쭉~ 문지르면\n" +
+"지나간 사진이 전부 선택돼요. (아이폰엔 '모두 선택'이 없어요)\n\n" +
+"🖥️ 컴퓨터에서는\n" +
+"첫 화면의 [폴더째 불러오기] 버튼으로 사진 폴더를 통째로,\n" +
+"또는 사진 파일들을 화면에 끌어다 놓아도 돼요.\n\n" +
+"💡 알아두세요\n" +
+"· 나눠서 여러 번 불러와도 같은 사진은 자동으로 합쳐져요.\n" +
+"· 그래서 '최근 몇 달'씩 나눠 불러오는 게 제일 편해요.\n" +
+"· 한 번에 500장 안팎을 추천해요 (너무 많으면 느려져요).";
+function showBulkHelp(){
+  openTextModal(
+    "사진 한 번에 많이 불러오기",
+    "휴대폰 보안 규칙상 앱이 갤러리를 통째로 읽을 수는 없어서, 직접 고른 사진만 받을 수 있어요. 대신 아래 방법으로 한 번에 왕창 선택할 수 있어요.",
+    BULK_HELP, null, { copy: false });
 }
 function buildBackupJSON(){
   const records = {};
@@ -1777,6 +1815,28 @@ function bindEvents(){
   const onFiles = (e) => { if (e.target.files && e.target.files.length) importFiles(e.target.files); e.target.value = ""; };
   $("#fileIn").addEventListener("change", onFiles);
   $("#fileIn2").addEventListener("change", onFiles);
+  const MEDIA_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|mp4|mov|m4v|webm|avi|mkv|3gp)$/i;
+  const isMedia = (f) => /^(image|video)\//.test(f.type || "") || MEDIA_RE.test(f.name || "");
+  $("#dirIn").addEventListener("change", (e) => {
+    const fs = [...(e.target.files || [])].filter(isMedia);
+    e.target.value = "";
+    if (fs.length) importFiles(fs);
+    else toast("폴더에서 사진·동영상을 찾지 못했어요");
+  });
+  // 컴퓨터(마우스 환경)에서만 폴더 버튼 노출 + 끌어다 놓기 지원
+  try {
+    if (matchMedia("(pointer:fine)").matches && !/Android|iPhone|iPad/i.test(navigator.userAgent)) {
+      $("#dirLabel").hidden = false;
+    }
+  } catch(e){}
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter(isMedia);
+    if (fs.length && !state.importing) importFiles(fs);
+  });
+  $("#btnBulkHelp").addEventListener("click", showBulkHelp);
+  $("#btnBulkHelp2").addEventListener("click", showBulkHelp);
   $("#btnSample").addEventListener("click", () => { if (!state.importing) loadSamples(); });
   $("#btnSelect").addEventListener("click", () => toggleSelectMode());
 
