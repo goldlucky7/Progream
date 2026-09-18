@@ -69,6 +69,14 @@ const URL = 'http://127.0.0.1:8901/index.html';
   check('month header 2026-09', await page.locator('#libGroups').textContent().then(t => t.includes('2026년 9월')));
   const chipN = await page.locator('#monthChips .chip').count();
   check('month chips = 3', chipN === 3, 'got ' + chipN);
+  // 월 선택 줄이 항상 위에 붙어 있고(스크롤 중에도 이동 가능), 높이 변수가 실측되는지
+  check('month chips sticky', await page.evaluate(() => getComputedStyle(document.querySelector('#monthChips')).position === 'sticky'));
+  check('chips height measured', await page.evaluate(() => parseInt(document.documentElement.style.getPropertyValue('--chipsH')) > 20));
+  // 화면에 보이는 달의 칩에 '현재' 표시가 붙는지 (맨 위 = 최신 달)
+  check('active month marked', await page.evaluate(() => {
+    const b = document.querySelector('#monthChips [data-jump="2026-09"]');
+    return b && b.getAttribute('aria-pressed') === 'true';
+  }));
 
   // 2) 실제 EXIF 사진 불러오기
   const files = fs.readdirSync(PICS).map(f => path.join(PICS, f));
