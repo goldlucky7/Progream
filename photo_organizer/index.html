@@ -327,6 +327,13 @@ nav#tabbar{
 .sheet .sub{font-size:12.5px; color:var(--muted); margin-bottom:12px}
 .sheetChips{display:flex; flex-wrap:wrap; gap:8px}
 .sheetChips .chip{font-size:14px; padding:9px 14px}
+.optRow{
+  display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+  background:var(--chip); border-radius:13px; padding:14px; margin-bottom:8px; cursor:pointer;
+}
+.optRow span{font-size:22px; flex:none}
+.optRow b{font-size:15px; display:block}
+.optRow small{font-size:12px; color:var(--muted); display:block; margin-top:1px}
 .sheet .sheetBtns{display:flex; gap:8px; margin-top:16px}
 .sheet .sheetBtns button{flex:1; padding:12px; border-radius:11px; font-weight:800; font-size:14px; background:var(--chip)}
 .sheet .sheetBtns .ok{background:var(--accent); color:var(--accent-ink)}
@@ -378,11 +385,12 @@ nav#tabbar{
   </div>
   <div class="hdrBtns">
     <button id="btnSelect" class="btnGhost" aria-pressed="false" hidden>선택</button>
-    <label class="btnPrimary" for="fileIn">
+    <button id="btnAdd" class="btnPrimary">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       사진 추가
-      <input id="fileIn" type="file" accept="image/*,video/*" multiple hidden>
-    </label>
+    </button>
+    <input id="fileIn" type="file" accept="image/*,video/*" multiple hidden>
+    <input id="allIn" type="file" multiple hidden>
   </div>
 </header>
 
@@ -408,13 +416,14 @@ nav#tabbar{
             내 사진 불러오기
             <input id="fileIn2" type="file" accept="image/*,video/*" multiple hidden>
           </label>
+          <label class="btnSoft" for="allIn">📂 파일 앱에서 왕창 선택</label>
           <label class="btnSoft" id="dirLabel" for="dirIn" hidden>
             폴더째 불러오기 (컴퓨터)
             <input id="dirIn" type="file" webkitdirectory multiple hidden>
           </label>
           <button id="btnSample" class="btnSoft">샘플 사진으로 구경하기</button>
         </div>
-        <button id="btnBulkHelp" class="linkBtn">📚 사진을 한 번에 왕창 선택하는 방법</button>
+        <button id="btnBulkHelp" class="linkBtn">📚 '모두 선택'으로 한 번에 불러오는 방법</button>
       </div>
       <div class="featList">
         <div class="feat"><div class="fIcon">📅</div><b>날짜별 모음</b><span>년·월·일로 자동 정렬된 사진첩</span></div>
@@ -519,6 +528,26 @@ nav#tabbar{
     <button id="vFav"><span>♥</span>즐겨찾기</button>
     <button id="vTheme"><span>🏷️</span>테마</button>
     <button id="vTrash"><span>🧹</span>정리함</button>
+  </div>
+</div>
+
+<div id="addDim" class="dim" hidden>
+  <div class="sheet">
+    <h3>사진 불러오기</h3>
+    <p class="sub">어디에서 고를까요?</p>
+    <label class="optRow" for="fileIn">
+      <span aria-hidden="true">📷</span>
+      <div><b>갤러리에서 고르기</b><small>몇 장만 고를 때 · 전체선택은 없어요</small></div>
+    </label>
+    <label class="optRow" for="allIn">
+      <span aria-hidden="true">📂</span>
+      <div><b>파일 앱에서 왕창 선택</b><small>사진을 꾹 누르면 '모두 선택' 가능 · DCIM→Camera</small></div>
+    </label>
+    <button class="optRow" id="btnBulkHelp3">
+      <span aria-hidden="true">📚</span>
+      <div><b>한 번에 많이 불러오는 방법</b><small>기종별 요령 자세히 보기</small></div>
+    </button>
+    <div class="sheetBtns"><button id="addCancel">닫기</button></div>
   </div>
 </div>
 
@@ -1623,27 +1652,31 @@ function openTextModal(title, sub, text, filename, opts){
   $("#modalDim").hidden = false;
 }
 const BULK_HELP =
-"📱 갤럭시 등 안드로이드에서 '모두 선택'하기\n" +
-"1. [사진 추가]를 눌러 선택 화면을 엽니다.\n" +
-"2. 갤러리 대신 「내 파일」(또는 '파일') 앱을 고르세요.\n" +
-"   (선택 화면 위쪽/옆의 ☰ 메뉴나 '찾아보기'에 있어요)\n" +
-"3. 내장 저장공간 → DCIM → Camera 폴더로 들어갑니다.\n" +
-"4. 오른쪽 위 ⋮ 메뉴 → 「모두 선택」 → 완료!\n" +
-"   (기종에 따라 메뉴 이름이 조금씩 달라요)\n\n" +
-"🍎 아이폰에서 빨리 여러 장 선택하기\n" +
+"⚠️ 먼저 알아두세요\n" +
+"갤러리(포토) 선택창에는 '전체선택' 버튼이 원래 없어요.\n" +
+"'모두 선택'은 파일 앱 화면에서만 나옵니다. 그래서 👇\n\n" +
+"📱 안드로이드(갤럭시)에서 '모두 선택'하기\n" +
+"1. [📂 파일 앱에서 왕창 선택] 버튼을 누르세요.\n" +
+"   (첫 화면과 '사진 추가' 안에 있어요)\n" +
+"2. 파일 고르는 화면이 뜨면 ☰ 메뉴에서 내장 저장공간(기기 이름)을\n" +
+"   고르고 DCIM → Camera 폴더로 들어가요.\n" +
+"3. ★ 핵심 ★ 사진 하나를 꾹~ 길게 누르세요.\n" +
+"   그래야 체크박스와 '모두 선택' 메뉴가 나타나요!\n" +
+"4. 오른쪽 위 ⋮ 메뉴 → 「모두 선택」 → 「선택(열기)」 끝!\n" +
+"   (⋮가 없으면 왼쪽 위 '전체' 체크박스를 누르세요)\n\n" +
+"🍎 아이폰\n" +
 "사진 고르는 화면에서 손가락을 떼지 않고 쭉~ 문지르면\n" +
-"지나간 사진이 전부 선택돼요. (아이폰엔 '모두 선택'이 없어요)\n\n" +
+"지나간 사진이 전부 선택돼요.\n\n" +
 "🖥️ 컴퓨터에서는\n" +
-"첫 화면의 [폴더째 불러오기] 버튼으로 사진 폴더를 통째로,\n" +
+"[폴더째 불러오기] 버튼으로 사진 폴더를 통째로,\n" +
 "또는 사진 파일들을 화면에 끌어다 놓아도 돼요.\n\n" +
-"💡 알아두세요\n" +
+"💡 팁\n" +
 "· 나눠서 여러 번 불러와도 같은 사진은 자동으로 합쳐져요.\n" +
-"· 그래서 '최근 몇 달'씩 나눠 불러오는 게 제일 편해요.\n" +
-"· 한 번에 500장 안팎을 추천해요 (너무 많으면 느려져요).";
+"· 한 번에 500장 안팎씩 나눠 불러오는 걸 추천해요.";
 function showBulkHelp(){
   openTextModal(
     "사진 한 번에 많이 불러오기",
-    "휴대폰 보안 규칙상 앱이 갤러리를 통째로 읽을 수는 없어서, 직접 고른 사진만 받을 수 있어요. 대신 아래 방법으로 한 번에 왕창 선택할 수 있어요.",
+    "휴대폰 보안 규칙상 앱이 갤러리를 통째로 읽을 수는 없어서, 직접 고른 사진만 받을 수 있어요. 대신 아래 방법이면 한 번에 왕창 선택됩니다.",
     BULK_HELP, null, { copy: false });
 }
 function buildBackupJSON(){
@@ -1812,17 +1845,36 @@ function bindEvents(){
   });
 
   /* 헤더 · 불러오기 */
-  const onFiles = (e) => { if (e.target.files && e.target.files.length) importFiles(e.target.files); e.target.value = ""; };
+  const addDim = $("#addDim");
+  const onFiles = (e) => {
+    addDim.hidden = true;
+    if (e.target.files && e.target.files.length) importFiles(e.target.files);
+    e.target.value = "";
+  };
   $("#fileIn").addEventListener("change", onFiles);
   $("#fileIn2").addEventListener("change", onFiles);
   const MEDIA_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|mp4|mov|m4v|webm|avi|mkv|3gp)$/i;
   const isMedia = (f) => /^(image|video)\//.test(f.type || "") || MEDIA_RE.test(f.name || "");
+  $("#allIn").addEventListener("change", (e) => {
+    addDim.hidden = true;
+    const fs = [...(e.target.files || [])].filter(isMedia);
+    const skipped = (e.target.files ? e.target.files.length : 0) - fs.length;
+    e.target.value = "";
+    if (fs.length) importFiles(fs);
+    else toast("선택한 파일 중에 사진·동영상이 없었어요");
+    if (fs.length && skipped > 0) setTimeout(() => toast("사진·동영상이 아닌 파일 " + skipped + "개는 뺐어요"), 2600);
+  });
   $("#dirIn").addEventListener("change", (e) => {
     const fs = [...(e.target.files || [])].filter(isMedia);
     e.target.value = "";
     if (fs.length) importFiles(fs);
     else toast("폴더에서 사진·동영상을 찾지 못했어요");
   });
+  /* 사진 추가 선택 시트 */
+  $("#btnAdd").addEventListener("click", () => { addDim.hidden = false; });
+  $("#addCancel").addEventListener("click", () => { addDim.hidden = true; });
+  addDim.addEventListener("click", (e) => { if (e.target.id === "addDim") addDim.hidden = true; });
+  $("#btnBulkHelp3").addEventListener("click", () => { addDim.hidden = true; showBulkHelp(); });
   // 컴퓨터(마우스 환경)에서만 폴더 버튼 노출 + 끌어다 놓기 지원
   try {
     if (matchMedia("(pointer:fine)").matches && !/Android|iPhone|iPad/i.test(navigator.userAgent)) {
