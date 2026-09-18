@@ -339,6 +339,11 @@ nav#tabbar{
 .modalBox .sheetBtns{display:flex; gap:8px; margin-top:12px}
 .modalBox .sheetBtns button{flex:1; padding:12px; border-radius:11px; font-weight:800; font-size:14px; background:var(--chip)}
 .modalBox .sheetBtns .ok{background:var(--accent); color:var(--accent-ink)}
+.vHint{
+  position:absolute; left:12px; right:12px; bottom:12px; z-index:3;
+  background:rgba(0,0,0,.6); color:#fff; font-size:12px; line-height:1.5;
+  padding:9px 12px; border-radius:10px; text-align:center;
+}
 #toast{
   position:fixed; left:50%; transform:translateX(-50%); bottom:calc(84px + env(safe-area-inset-bottom,0px)); z-index:80;
   background:var(--ink); color:var(--bg); font-size:13px; font-weight:700; padding:10px 16px; border-radius:999px;
@@ -392,7 +397,7 @@ nav#tabbar{
         <p>사진을 불러오면 날짜별·테마별로 자동으로 모아 주고, 중복·흐릿한 사진처럼 정리할 사진을 찾아 드려요.</p>
         <div class="privacy">
           <span aria-hidden="true">🔒</span>
-          <span><b>사진은 휴대폰 밖으로 나가지 않아요.</b> 인터넷 업로드 없이 이 화면 안에서만 처리됩니다.</span>
+          <span><b>사진은 휴대폰 밖으로 나가지 않아요.</b> 업로드 없이 기기 안에서만 처리되고, 정리한 내용은 이 휴대폰 브라우저에 자동 저장돼 다음에 열어도 그대로예요.</span>
         </div>
         <div class="heroBtns">
           <label class="btnPrimary" for="fileIn2">
@@ -444,9 +449,15 @@ nav#tabbar{
     <p id="searchMeta"></p>
     <div class="grid" id="searchGrid"></div>
     <p class="secTitle">데이터 관리</p>
+    <p class="detailNote">정리 내용은 이 기기 브라우저에 자동 저장돼요. 기기를 바꾸거나 브라우저 데이터를 지울 때를 대비해 가끔 백업해 두세요.</p>
     <div class="dataRow">
+      <button id="btnBackup">기록 백업하기</button>
+      <button id="btnRestorePick">백업 불러오기</button>
+      <input id="backupIn" type="file" accept="application/json,.json,.txt" hidden>
+    </div>
+    <div class="dataRow" style="margin-top:8px">
       <button id="btnClearSamples">샘플 사진 지우기</button>
-      <button id="btnResetAll" class="dgr">정리 기록 전체 삭제</button>
+      <button id="btnResetAll" class="dgr">저장된 기록 전체 삭제</button>
     </div>
   </section>
 </main>
@@ -516,12 +527,13 @@ nav#tabbar{
 
 <div id="modalDim" class="dim" hidden>
   <div class="modalBox">
-    <h3>갤러리에서 지울 사진 목록</h3>
-    <p class="sub">브라우저는 휴대폰 사진을 직접 삭제할 수 없어요. 아래 목록을 복사해 두고, 갤러리 앱에서 해당 사진을 찾아 삭제하세요. 날짜순으로 정렬해 두었어요.</p>
+    <h3 id="modalTitle">갤러리에서 지울 사진 목록</h3>
+    <p class="sub" id="modalSub"></p>
     <div id="trashListText"></div>
     <div class="sheetBtns">
       <button id="modalClose">닫기</button>
-      <button id="btnCopyList" class="ok">목록 복사</button>
+      <button id="btnSaveList" class="ok" hidden>파일로 저장</button>
+      <button id="btnCopyList" class="ok">복사하기</button>
     </div>
   </div>
 </div>
@@ -538,6 +550,7 @@ const AUTO_LABEL = { shot:"스크린샷", video:"동영상", face:"인물" };
 const state = {
   photos: [],            // 사진 객체 배열
   byId: new Map(),
+  byKey: new Map(),      // recKey → photo (자동 저장/원본 재연결용)
   order: [],             // 날짜 내림차순 id 목록
   customThemes: [],
   tab: "library",
@@ -599,8 +612,12 @@ let idb = null;
 function idbOpen(){
   return new Promise((res) => {
     try {
-      const rq = indexedDB.open("photo-organizer", 1);
-      rq.onupgradeneeded = () => { rq.result.createObjectStore("records"); };
+      const rq = indexedDB.open("photo-organizer", 2);
+      rq.onupgradeneeded = () => {
+        const d = rq.result;
+        if (!d.objectStoreNames.contains("records")) d.createObjectStore("records");
+        if (!d.objectStoreNames.contains("photos")) d.createObjectStore("photos");
+      };
       rq.onsuccess = () => res(rq.result);
       rq.onerror = () => res(null);
     } catch(e){ res(null); }
@@ -630,8 +647,50 @@ function idbSave(p){
 }
 function idbClearAll(){
   if (!idb) return;
-  try { idb.transaction("records", "readwrite").objectStore("records").clear(); } catch(e){}
+  try {
+    const tx = idb.transaction(["records", "photos"], "readwrite");
+    tx.objectStore("records").clear();
+    tx.objectStore("photos").clear();
+  } catch(e){}
   savedRecs = new Map();
+}
+
+/* ---------- 사진 자동 저장 (썸네일+분석 결과, 기기 안 브라우저 저장소) ---------- */
+let cacheOK = true;
+function idbSavePhoto(p, blob){
+  if (!idb || p.sample) return;
+  try {
+    const rec = {
+      name: p.name, size: p.size, lm: p.lm, date: p.date, dateSrc: p.dateSrc,
+      w: p.w, h: p.h, isVideo: p.isVideo ? 1 : 0, dur: p.dur, shot: p.shot ? 1 : 0,
+      blur: p.blur, bright: p.bright, hh: p.hh, hl: p.hl, vh: p.vh, vl: p.vl,
+      hasHash: p.hasHash ? 1 : 0, autoT: [...p.autoT], thumb: blob || null,
+    };
+    const rq = idb.transaction("photos", "readwrite").objectStore("photos").put(rec, recKey(p));
+    rq.onerror = () => { cacheOK = false; };
+  } catch(e){ cacheOK = false; }
+}
+function idbLoadPhotos(){
+  return new Promise((res) => {
+    if (!idb) return res([]);
+    const out = [];
+    try {
+      const cur = idb.transaction("photos", "readonly").objectStore("photos").openCursor();
+      cur.onsuccess = () => {
+        const c = cur.result;
+        if (c) { out.push([c.key, c.value]); c.continue(); } else res(out);
+      };
+      cur.onerror = () => res(out);
+    } catch(e){ res(out); }
+  });
+}
+function idbDeletePhoto(key){
+  if (!idb) return;
+  try {
+    const tx = idb.transaction(["photos", "records"], "readwrite");
+    tx.objectStore("photos").delete(key);
+    tx.objectStore("records").delete(key);
+  } catch(e){}
 }
 function restoreRec(p){
   const r = savedRecs.get(recKey(p));
@@ -814,7 +873,7 @@ async function processImage(p, file){
     const [ct, xt] = mkCanvas(Math.max(1, Math.round(p.w * sc)), Math.max(1, Math.round(p.h * sc)));
     xt.drawImage(src, 0, 0, ct.width, ct.height);
     const tb = await toBlobP(ct, "image/jpeg", 0.8);
-    if (tb) p.thumb = URL.createObjectURL(tb);
+    if (tb) { p.thumb = URL.createObjectURL(tb); p._tb = tb; }
     const a = analyze(src, p.w, p.h);
     p.blur = a.blur; p.bright = a.bright; p.hh = a.hh; p.hl = a.hl; p.vh = a.vh; p.vl = a.vl; p.hasHash = true;
     if (await detectFaces(ct) > 0) p.autoT.add(AUTO_LABEL.face);
@@ -848,7 +907,7 @@ function processVideo(p, file){
         const [ct, xt] = mkCanvas(Math.max(1, Math.round((p.w||320) * sc)), Math.max(1, Math.round((p.h||240) * sc)));
         xt.drawImage(v, 0, 0, ct.width, ct.height);
         const tb = await toBlobP(ct, "image/jpeg", 0.78);
-        if (tb) p.thumb = URL.createObjectURL(tb);
+        if (tb) { p.thumb = URL.createObjectURL(tb); p._tb = tb; }
       } catch(e){}
       clearTimeout(timer); finish();
     };
@@ -865,10 +924,14 @@ async function importFiles(fileList, opts){
   const bar = $("#importBar"), fill = $("#importFill"), cnt = $("#importCount");
   $("#importLabel").textContent = opts && opts.sample ? "샘플 사진 준비 중…" : "사진 불러오는 중… (기기 안에서만 처리돼요)";
   bar.hidden = false;
-  let done = 0;
-  const seen = new Set(state.photos.map(recKey));
+  let done = 0, relink = 0;
   const queue = files.slice();
   const news = [];
+  const tick = () => {
+    done++;
+    cnt.textContent = done + " / " + files.length;
+    fill.style.width = Math.round(done / files.length * 100) + "%";
+  };
 
   const work = async () => {
     while (queue.length) {
@@ -883,8 +946,13 @@ async function importFiles(fileList, opts){
         fav: false, trash: false, sample: !!(opts && opts.sample),
       };
       const k = recKey(p);
-      if (seen.has(k)) { done++; continue; }
-      seen.add(k);
+      const exist = state.byKey.get(k);
+      if (exist) {
+        // 이미 저장된 사진: 원본 파일만 다시 연결
+        if (!exist.file) { exist.file = f; relink++; }
+        tick(); continue;
+      }
+      state.byKey.set(k, p);
       try {
         if (p.isVideo) await processVideo(p, f);
         else await processImage(p, f);
@@ -892,12 +960,12 @@ async function importFiles(fileList, opts){
       if (!p.date) p.date = p.lm;
       restoreRec(p);
       if (opts && opts.themes && opts.themes[p.name]) for (const t of opts.themes[p.name]) p.manT.add(t);
+      idbSavePhoto(p, p._tb || null);
+      delete p._tb;
       state.photos.push(p);
       state.byId.set(p.id, p);
       news.push(p);
-      done++;
-      cnt.textContent = done + " / " + files.length;
-      fill.style.width = Math.round(done / files.length * 100) + "%";
+      tick();
       if (done === 12 || done % Math.max(60, Math.ceil(files.length / 8)) === 0) render();
       await new Promise(r => setTimeout(r, 0));
     }
@@ -910,7 +978,10 @@ async function importFiles(fileList, opts){
   rebuild();
   computeDupes();
   render();
-  if (news.length) toast(news.length + "장을 불러왔어요" + (state.faceOK ? " · 인물 자동 인식 적용" : ""));
+  const parts = [];
+  if (news.length) parts.push(news.length + "장을 불러와 저장했어요");
+  if (relink) parts.push(relink + "장의 원본을 다시 연결했어요");
+  if (parts.length) toast(parts.join(" · "));
 }
 
 /* ---------- 샘플 사진 ---------- */
@@ -1003,6 +1074,8 @@ async function makeSampleFile(kind, name, dateStr, opt){
 }
 
 async function loadSamples(){
+  const olds = state.photos.filter(p => p.sample);
+  if (olds.length) removePhotos(olds);
   const jobs = [
     ["landscape","샘플_바다여행_01.jpg","2026-08-02T10:12:00",{seed:11}],
     ["landscape","샘플_바다여행_02.jpg","2026-08-02T10:12:31",{seed:11,tweak:true}],   // 비슷한 사진
@@ -1088,6 +1161,20 @@ function cleanSets(){
     big: alive.filter(p => (p.isVideo && p.size > BIG_VIDEO) || (!p.isVideo && p.size > BIG_PHOTO)),
     trash: alive.filter(p => p.trash),
   };
+}
+
+/* ---------- 사진을 앱 목록·저장소에서 제거 (휴대폰 원본은 건드리지 않음) ---------- */
+function removePhotos(ps){
+  const del = new Set();
+  for (const p of ps) {
+    del.add(p.id);
+    if (p.thumb) { try { URL.revokeObjectURL(p.thumb); } catch(e){} }
+    state.byId.delete(p.id);
+    state.byKey.delete(recKey(p));
+    if (!p.sample) idbDeletePhoto(recKey(p));
+  }
+  state.photos = state.photos.filter(p => !del.has(p.id));
+  computeDupes();
 }
 
 /* ---------- 타일 ---------- */
@@ -1320,6 +1407,7 @@ function renderCleanDetail(s){
     html += back + "정리함 · " + arr.length + "장</h2>" +
       '<button class="miniBtn" data-trashclear="1"' + (arr.length ? "" : " disabled") + ">모두 꺼내기</button></div>" +
       '<p class="detailNote">사진을 누르면 정리함에서 다시 꺼낼 수 있어요. 실제 파일은 지워지지 않았어요.</p>';
+    if (arr.length) html += '<div class="rowActions"><button class="dgr" data-trashdone="1">갤러리에서 삭제 끝냈어요 · 이 목록 비우기</button></div>';
     html += arr.length
       ? '<div class="grid">' + arr.map(p => { listIds.push(p.id); return tileHTML(p, "act"); }).join("") + "</div>"
       : '<p class="noRes">정리함이 비어 있어요.</p>';
@@ -1402,16 +1490,23 @@ function viewerClose(){
   document.documentElement.style.overflow = "";
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
   const st = $("#vStage");
-  for (const el of st.querySelectorAll("img,video,.vErr")) el.remove();
+  for (const el of st.querySelectorAll("img,video,.vErr,.vHint")) el.remove();
   render();
 }
 function viewerRender(){
   const p = state.byId.get(state.viewerList[state.viewerIdx]);
   if (!p) return viewerClose();
   const st = $("#vStage");
-  for (const el of st.querySelectorAll("img,video,.vErr")) el.remove();
+  for (const el of st.querySelectorAll("img,video,.vErr,.vHint")) el.remove();
   if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; }
-  try { vUrl = URL.createObjectURL(p.file); } catch(e){}
+  if (p.file) { try { vUrl = URL.createObjectURL(p.file); } catch(e){} }
+  const showErr = (msg) => {
+    const d = document.createElement("p");
+    d.className = "vErr";
+    d.style.cssText = "color:#fff;opacity:.7;font-size:13px;padding:20px;text-align:center";
+    d.textContent = msg;
+    st.appendChild(d);
+  };
   if (vUrl && p.isVideo) {
     const v = document.createElement("video");
     v.src = vUrl; v.controls = true; v.playsInline = true; v.preload = "metadata";
@@ -1422,9 +1517,23 @@ function viewerRender(){
     im.onerror = () => {
       im.remove();
       if (p.thumb) { const t = new Image(); t.src = p.thumb; st.appendChild(t); }
-      else { const d = document.createElement("p"); d.className = "vErr"; d.style.cssText = "color:#fff;opacity:.7;font-size:13px;padding:20px;text-align:center"; d.textContent = "이 형식은 미리보기를 지원하지 않아요 (" + p.name + ")"; st.appendChild(d); }
+      else showErr("이 형식은 미리보기를 지원하지 않아요 (" + p.name + ")");
     };
     st.appendChild(im);
+  } else if (p.thumb && !p.isVideo) {
+    const t = new Image(); t.src = p.thumb; st.appendChild(t);
+    const hint = document.createElement("div");
+    hint.className = "vHint";
+    hint.textContent = "저장된 미리보기 화질이에요 · [사진 추가]로 같은 사진을 다시 불러오면 원본 화질로 볼 수 있어요";
+    st.appendChild(hint);
+  } else if (p.isVideo) {
+    if (p.thumb) { const t = new Image(); t.src = p.thumb; st.appendChild(t); }
+    const hint = document.createElement("div");
+    hint.className = "vHint";
+    hint.textContent = "동영상 원본이 연결되어 있지 않아요 · [사진 추가]로 다시 불러오면 재생돼요";
+    st.appendChild(hint);
+  } else {
+    showErr("미리보기가 없어요 (" + p.name + ")");
   }
   $("#vName").textContent = p.name;
   $("#vMeta").textContent = fmtDate(p.date) + (p.dateSrc === "exif" ? " 촬영" : "") + " · " + fmtSize(p.size) +
@@ -1488,7 +1597,26 @@ function toggleSelectMode(force){
   render();
 }
 
-/* ---------- 삭제 목록 · 알림 ---------- */
+/* ---------- 삭제 목록 · 백업 · 알림 ---------- */
+let dlNS = null;                 // 파일 저장 기능 (지원 환경에서만)
+let modalPayload = null;         // {text, filename}
+function openTextModal(title, sub, text, filename){
+  modalPayload = { text, filename };
+  $("#modalTitle").textContent = title;
+  $("#modalSub").textContent = sub;
+  $("#trashListText").textContent = text;
+  $("#btnSaveList").hidden = !dlNS;
+  $("#modalDim").hidden = false;
+}
+function buildBackupJSON(){
+  const records = {};
+  for (const [k, v] of savedRecs) records[k] = v;
+  for (const p of state.photos) if (!p.sample) {
+    records[recKey(p)] = { manT: [...p.manT], noAuto: [...p.noAuto], fav: p.fav ? 1 : 0, trash: p.trash ? 1 : 0 };
+  }
+  return JSON.stringify({ app: "photo-organizer", v: 2, exported: new Date().toISOString(),
+    customThemes: state.customThemes, records }, null, 1);
+}
 function buildTrashText(){
   const arr = state.photos.filter(p => p.trash).sort((a, b) => b.date - a.date);
   const lines = arr.map((p, i) => {
@@ -1614,9 +1742,20 @@ function bindEvents(){
       state.photos.forEach(p => { if (p.trash) setTrash(p, false); });
       toast("정리함을 비웠어요 (사진은 그대로)"); render(); return;
     }
+    if (t.closest("[data-trashdone]")) {
+      const ps = state.photos.filter(p => p.trash);
+      removePhotos(ps);
+      state.cleanView = null;
+      render();
+      toast(ps.length + "장을 목록에서 지웠어요 · 갤러리 정리 끝!");
+      return;
+    }
     if (t.closest("#btnTrashList")) {
-      $("#trashListText").textContent = buildTrashText();
-      $("#modalDim").hidden = false; return;
+      openTextModal(
+        "갤러리에서 지울 사진 목록",
+        "브라우저는 휴대폰 사진을 직접 삭제할 수 없어요. 아래 목록을 복사하거나 저장해 두고, 갤러리 앱에서 해당 사진을 찾아 삭제하세요.",
+        buildTrashText(), "지울사진목록.txt");
+      return;
     }
 
     const sType = t.closest("[data-stype]");
@@ -1681,7 +1820,52 @@ function bindEvents(){
   $("#modalClose").addEventListener("click", () => { $("#modalDim").hidden = true; });
   $("#modalDim").addEventListener("click", (e) => { if (e.target.id === "modalDim") $("#modalDim").hidden = true; });
   $("#btnCopyList").addEventListener("click", async () => {
-    toast(await copyText(buildTrashText()) ? "목록을 복사했어요. 메모장에 붙여넣어 두세요!" : "복사가 안 되면 목록을 길게 눌러 직접 복사하세요");
+    const text = modalPayload ? modalPayload.text : buildTrashText();
+    toast(await copyText(text) ? "복사했어요. 메모장에 붙여넣어 두세요!" : "복사가 안 되면 내용을 길게 눌러 직접 복사하세요");
+  });
+  $("#btnSaveList").addEventListener("click", async () => {
+    if (!dlNS || !modalPayload) return;
+    try { await dlNS.save({ filename: modalPayload.filename, data: modalPayload.text }); toast("파일로 저장했어요"); }
+    catch(e){ toast("저장이 취소되었거나 지원되지 않아요 · 복사하기를 이용하세요"); }
+  });
+
+  /* 백업 */
+  $("#btnBackup").addEventListener("click", async () => {
+    const json = buildBackupJSON();
+    if (dlNS) {
+      try { await dlNS.save({ filename: "사진정리_백업.json", data: json }); toast("백업 파일을 저장했어요"); return; }
+      catch(e){ /* 취소·미지원 → 아래 대체 방법 */ }
+    }
+    openTextModal(
+      "정리 기록 백업",
+      "아래 내용을 복사해 메모장 등에 보관하세요. 나중에 '백업 불러오기'에서 파일(.json 또는 .txt)로 저장해 두었던 내용을 되살릴 수 있어요.",
+      json, "사진정리_백업.json");
+  });
+  $("#btnRestorePick").addEventListener("click", () => $("#backupIn").click());
+  $("#backupIn").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      if (data.app !== "photo-organizer" || !data.records) throw new Error("format");
+      for (const th of (data.customThemes || [])) {
+        if (typeof th === "string" && !state.customThemes.includes(th)) state.customThemes.push(th);
+      }
+      lsSet("po.customThemes", JSON.stringify(state.customThemes));
+      let n = 0;
+      for (const [k, r] of Object.entries(data.records)) {
+        savedRecs.set(k, r); n++;
+        try { if (idb) idb.transaction("records", "readwrite").objectStore("records").put(r, k); } catch(e2){}
+        const p = state.byKey.get(k);
+        if (p) {
+          p.manT = new Set(r.manT || []); p.noAuto = new Set(r.noAuto || []);
+          p.fav = !!r.fav; p.trash = !!r.trash;
+        }
+      }
+      render();
+      toast("백업 " + n + "건을 불러왔어요");
+    } catch(err){ toast("백업 파일을 읽지 못했어요 · '사진정리_백업' 파일이 맞는지 확인하세요"); }
   });
 
   /* 검색 */
@@ -1691,10 +1875,8 @@ function bindEvents(){
     qTimer = setTimeout(() => { state.search.q = $("#q").value; renderSearch(); }, 180);
   });
   $("#btnClearSamples").addEventListener("click", () => {
-    const del = state.photos.filter(p => p.sample);
-    del.forEach(p => { if (p.thumb) URL.revokeObjectURL(p.thumb); state.byId.delete(p.id); });
-    state.photos = state.photos.filter(p => !p.sample);
-    computeDupes(); render();
+    removePhotos(state.photos.filter(p => p.sample));
+    render();
     toast("샘플 사진을 지웠어요");
   });
   let resetArmed = false, resetTimer = null;
@@ -1702,17 +1884,20 @@ function bindEvents(){
     if (!resetArmed) {
       resetArmed = true;
       $("#btnResetAll").textContent = "정말요? 한 번 더 누르면 삭제";
-      resetTimer = setTimeout(() => { resetArmed = false; $("#btnResetAll").textContent = "정리 기록 전체 삭제"; }, 4000);
+      resetTimer = setTimeout(() => { resetArmed = false; $("#btnResetAll").textContent = "저장된 기록 전체 삭제"; }, 4000);
       return;
     }
     clearTimeout(resetTimer); resetArmed = false;
-    $("#btnResetAll").textContent = "정리 기록 전체 삭제";
+    $("#btnResetAll").textContent = "저장된 기록 전체 삭제";
     idbClearAll();
     state.customThemes = [];
     lsSet("po.customThemes", "[]");
-    state.photos.forEach(p => { p.manT.clear(); p.noAuto.clear(); p.fav = false; p.trash = false; });
+    for (const p of state.photos) if (p.thumb) { try { URL.revokeObjectURL(p.thumb); } catch(e){} }
+    state.photos = [];
+    state.byId.clear(); state.byKey.clear();
+    state.dupGroups = []; state.select.clear(); state.curTheme = null; state.cleanView = null;
     render();
-    toast("정리 기록을 모두 지웠어요 (사진 파일은 그대로예요)");
+    toast("저장된 기록을 모두 지웠어요 (휴대폰의 사진 파일은 그대로예요)");
   });
 
   /* 뷰어 */
@@ -1751,6 +1936,26 @@ function bindEvents(){
   bindEvents();
   idb = await idbOpen();
   await idbLoadAll();
+  // 자동 저장된 사진 복원 (원본 파일 없이 미리보기·정리 상태만)
+  const cached = await idbLoadPhotos();
+  for (const [k, r] of cached) {
+    if (state.byKey.has(k)) continue;
+    const p = {
+      id: uid(), file: null, name: r.name || "이름없음", size: r.size || 0, lm: r.lm || 0,
+      isVideo: !!r.isVideo, date: r.date || r.lm || Date.now(), dateSrc: r.dateSrc || "file",
+      w: r.w || 0, h: r.h || 0, thumb: null, dur: r.dur || 0,
+      hh: r.hh || 0, hl: r.hl || 0, vh: r.vh || 0, vl: r.vl || 0, hasHash: !!r.hasHash,
+      blur: r.blur || 0, bright: (r.bright == null ? 128 : r.bright), shot: !!r.shot,
+      autoT: new Set(r.autoT || []), manT: new Set(), noAuto: new Set(),
+      fav: false, trash: false, sample: false,
+    };
+    try { if (r.thumb) p.thumb = URL.createObjectURL(r.thumb); } catch(e){}
+    restoreRec(p);
+    state.photos.push(p);
+    state.byId.set(p.id, p);
+    state.byKey.set(k, p);
+  }
+  if (state.photos.length) computeDupes();
   try {
     const ct = JSON.parse(lsGet("po.customThemes") || "[]");
     if (Array.isArray(ct)) state.customThemes = ct.filter(x => typeof x === "string").slice(0, 40);
@@ -1758,6 +1963,12 @@ function bindEvents(){
   const t = lsGet("po.tab");
   if (["library","themes","clean","search"].includes(t)) state.tab = t;
   goTab(state.tab);
-  if (savedRecs.size) toast("지난 정리 기록을 기억하고 있어요 · 같은 사진을 불러오면 그대로 복원돼요");
+  if (state.photos.length) toast("지난 정리 상태 " + state.photos.length + "장을 복원했어요");
+  else if (savedRecs.size) toast("지난 정리 기록을 기억하고 있어요 · 같은 사진을 불러오면 그대로 복원돼요");
+  // 파일 저장 기능은 지원되는 환경에서만 켜짐
+  try {
+    const u = window.claude && window.claude.use && window.claude.use("downloads");
+    if (u && u.then) u.then(d => { dlNS = d; }).catch(() => {});
+  } catch(e){}
 })();
 </script>
