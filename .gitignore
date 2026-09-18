@@ -6,3 +6,9 @@ output/
 
 __pycache__/
 *.pyc
+
+# photo_organizer 테스트 산출물
+photo_organizer/dev/testpics/
+photo_organizer/dev/camera_test.zip
+photo_organizer/dev/export_test.zip
+photo_organizer/dev/backup_test.json
