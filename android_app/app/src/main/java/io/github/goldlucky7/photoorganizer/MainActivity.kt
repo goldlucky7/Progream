@@ -44,11 +44,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -102,7 +106,8 @@ class MainActivity : ComponentActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                assetLoader.shouldInterceptRequest(request.url)
+                // 인터넷 권한은 앱 업데이트 전용 — 웹 화면의 외부 요청은 전부 차단 (사진 유출 원천 봉쇄)
+                assetLoader.shouldInterceptRequest(request.url) ?: notFound()
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (request.url.host == "appassets.androidplatform.net") return false
@@ -137,6 +142,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         })
+
+        // 지난 업데이트 때 받아 둔 설치 파일 정리
+        exec.execute { try { File(cacheDir, "update").deleteRecursively() } catch (_: Exception) {} }
 
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
     }
@@ -188,6 +196,7 @@ class MainActivity : ComponentActivity() {
         fun getInfo(): String = JSONObject()
             .put("platform", "android")
             .put("ver", BuildConfig.VERSION_NAME)
+            .put("verCode", BuildConfig.VERSION_CODE)
             .put("sdk", Build.VERSION.SDK_INT)
             .put("thumbTpl", "https://appassets.androidplatform.net/thumb/{mt}/{id}")
             .put("mediaTpl", "https://appassets.androidplatform.net/media/{mt}/{id}")
@@ -220,6 +229,8 @@ class MainActivity : ComponentActivity() {
                             "list" -> done(id, true, doList())
                             "album" -> done(id, true, doAlbum(id, p))
                             "saveText" -> done(id, true, doSaveText(p))
+                            "updCheck" -> done(id, true, doUpdateCheck())
+                            "updRun" -> done(id, true, doUpdateRun(id))
                             else -> done(id, false, JSONObject().put("error", "unknown: $method"))
                         }
                     } catch (e: Exception) { fail(id, e) }
@@ -427,6 +438,60 @@ class MainActivity : ComponentActivity() {
         cv.clear(); cv.put(MediaStore.MediaColumns.IS_PENDING, 0)
         contentResolver.update(outUri, cv, null, null)
         return JSONObject().put("ok", true).put("where", "다운로드(Download) 폴더")
+    }
+
+    /* ---------- 앱 업데이트 (GitHub Releases 고정 주소에서 새 버전 확인·설치) ---------- */
+
+    private val updateBase = "https://github.com/goldlucky7/Progream/releases/latest/download/"
+
+    private fun doUpdateCheck(): JSONObject {
+        val con = URL(updateBase + "version.txt").openConnection() as HttpURLConnection
+        con.connectTimeout = 6000
+        con.readTimeout = 6000
+        return try {
+            val latest = con.inputStream.bufferedReader().use { it.readText() }.trim().toIntOrNull() ?: 0
+            JSONObject().put("cur", BuildConfig.VERSION_CODE).put("latest", latest)
+        } finally { con.disconnect() }
+    }
+
+    private fun doUpdateRun(id: String): JSONObject {
+        val dir = File(cacheDir, "update").apply { mkdirs() }
+        val apk = File(dir, "PhotoOrganizer.apk")
+        val con = URL(updateBase + "PhotoOrganizer.apk").openConnection() as HttpURLConnection
+        con.connectTimeout = 8000
+        con.readTimeout = 60000
+        try {
+            val total = con.contentLengthLong
+            con.inputStream.use { inp ->
+                apk.outputStream().use { os ->
+                    val buf = ByteArray(65536)
+                    var got = 0L
+                    var lastP = -1
+                    while (true) {
+                        val n = inp.read(buf)
+                        if (n < 0) break
+                        os.write(buf, 0, n)
+                        got += n
+                        if (total > 0) {
+                            val pct = ((got * 100) / total).toInt()
+                            if (pct >= lastP + 5) { lastP = pct; prog(id, pct, 100) }
+                        }
+                    }
+                }
+            }
+        } finally { con.disconnect() }
+        if (apk.length() < 1000000) throw IllegalStateException("다운로드가 온전하지 않아요")
+        val uri = FileProvider.getUriForFile(this, "$packageName.files", apk)
+        mainHandler.post {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                )
+            } catch (_: Exception) {}
+        }
+        return JSONObject().put("ok", true)
     }
 
     /* ---------- 썸네일·원본 스트리밍 (WebView 경로 핸들러) ---------- */

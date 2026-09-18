@@ -51,7 +51,9 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../PhotoOrganizer.apk
-          ls -la ../PhotoOrganizer.apk
+          # 설치된 앱이 새 버전을 스스로 알아채는 데 쓰는 버전 번호 파일
+          echo "${{ github.run_number }}" > ../version.txt
+          ls -la ../PhotoOrganizer.apk ../version.txt
 
       - name: Releases에 올리기 (항상 최신 1개 유지)
         uses: softprops/action-gh-release@v2
@@ -59,5 +61,7 @@ jobs:
           tag_name: apk
           name: "📱 사진 정리 도우미 — 설치 파일 (항상 최신)"
           body_path: android_app/RELEASE_NOTES.md
-          files: PhotoOrganizer.apk
+          files: |
+            PhotoOrganizer.apk
+            version.txt
           make_latest: true

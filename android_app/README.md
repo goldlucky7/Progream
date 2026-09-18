@@ -35,7 +35,9 @@
 
 - minSdk 30 (Android 11+) — createTrashRequest·RELATIVE_PATH가 30+, 갤럭시 2019년 이후 커버
 - targetSdk 34 — Android 14 "일부 사진만 허용"은 배너로 안내 (index.html `#natPartial`)
-- 인터넷 권한 없음 (사진 유출 원천 차단이 셀링 포인트)
+- 인터넷 권한은 **앱 자체 업데이트 전용** (`updCheck`/`updRun` — releases/latest의 version.txt·APK).
+  WebView의 외부 요청은 shouldInterceptRequest에서 전부 차단(404)하므로 사진은 어떤 경로로도 못 나감.
+  업데이트 설치는 REQUEST_INSTALL_PACKAGES + FileProvider(cache/update/) 경유, versionCode 비교는 CI run number 기준
 - 삭제는 완전삭제가 아니라 **휴지통 이동**(createTrashRequest): 갤러리 앱과 같은 동작이라
   비개발자 사용자에게 안전. 완전삭제로 바꾸려면 MainActivity의 `createTrashRequest` → `createDeleteRequest`.
 

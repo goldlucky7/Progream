@@ -45,7 +45,7 @@
   - **정리함→바로 삭제**(`delete`): `MediaStore.createTrashRequest` — 시스템 확인창 1번 → **갤러리 휴지통 30일 보관** 후 자동 삭제 (갤러리 앱 삭제와 같은 동작 — 완전삭제보다 사용자에게 안전).
   - 백업 저장(`saveText` → Download 폴더), 동영상은 `open`으로 외부 앱 재생, 뒤로가기는 `__anBack`으로 웹이 먼저 처리.
   - Android 14 "일부 사진만 허용" → 상단 배너(`#natPartial`)로 전체 허용 유도.
-- 앱은 **인터넷 권한 자체가 없음** — "사진이 폰 밖으로 절대 안 나감" 보장. minSdk 30(Android 11+), targetSdk 34.
+- 인터넷 권한은 **앱 자체 업데이트 전용**(releases/latest의 version.txt 비교 → APK 다운로드 → 설치창). WebView 외부 요청은 전부 차단(404)이라 사진은 여전히 못 나감. 새 버전이 나오면 앱이 배너로 알려줌. minSdk 30(Android 11+), targetSdk 34.
 - 브리지 규약 전체는 `android_app/README.md` 참고.
 
 ### 서명 (사용자 대화에서 다시 물어보지 말 것 — 이미 결정·고지됨)

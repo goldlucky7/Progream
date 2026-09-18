@@ -2516,7 +2516,7 @@ const NAT = (() => {
 })();
 window.NativeBridge = NAT; // 존재 여부로 네이티브 모드 판별 (인수인계 규약)
 
-const natState = { access: null, syncing: false, analyzing: false, albuming: false, deleting: false };
+const natState = { access: null, syncing: false, analyzing: false, albuming: false, deleting: false, updating: false };
 let natAnaCache = new Map();   // recKey → 지난 실행 분석 결과 (IndexedDB photos 스토어)
 const natRef = (p) => p.nat.mt + ":" + p.nat.id;
 
@@ -2765,6 +2765,69 @@ function natPatchUI(){
   pb.id = "natPartial"; pb.className = "tagBanner"; pb.hidden = true;
   pb.innerHTML = "<span>지금은 <b>일부 사진만</b> 보고 있어요. 갤러리 전체를 정리하려면 전체 허용이 좋아요.</span><button id=\"natMore\">전체 허용하기</button>";
   $("#tab-library").insertBefore(pb, $("#monthChips"));
+  // 새 버전 알림 배너 (카카오톡처럼 앱 안에서 업데이트)
+  const ub = document.createElement("div");
+  ub.id = "natUpdate"; ub.className = "tagBanner"; ub.hidden = true;
+  ub.innerHTML = "<span>🎁 <b>새 버전</b>이 나왔어요! 정리 기록은 그대로 유지돼요.</span><button id=\"natUpdBtn\">업데이트</button>";
+  $("#tab-library").insertBefore(ub, pb);
+  // 검색 탭 데이터 관리에 수동 확인 버튼
+  const ur = document.createElement("div");
+  ur.className = "dataRow"; ur.style.marginTop = "8px";
+  ur.innerHTML = '<button id="natUpdCheck">앱 새 버전 확인 (지금 ' + esc(NAT.info.ver || "") + ")</button>";
+  const anchorRow = $("#btnClearSamples").closest(".dataRow");
+  anchorRow.after(ur);
+}
+
+/* 새 버전 확인: 실행 후 6시간에 한 번 자동, 버튼으로는 언제든 */
+async function natCheckUpdate(byUser){
+  if (!NAT) return;
+  try {
+    if (!byUser) {
+      const last = +lsGet("po.updAt") || 0;
+      if (Date.now() - last < 21600000) return;
+    }
+    const r = await NAT.call("updCheck");
+    lsSet("po.updAt", String(Date.now()));
+    if (r.latest > r.cur) {
+      const ub = $("#natUpdate");
+      if (ub) ub.hidden = false;
+      if (byUser) toast("새 버전이 있어요! 사진첩 위의 「업데이트」를 눌러 주세요", 5000);
+    } else if (byUser) {
+      toast("지금이 최신 버전이에요 👍");
+    }
+  } catch(e){
+    if (byUser) toast("확인하지 못했어요 · 인터넷 연결을 확인해 주세요", 5000);
+  }
+}
+
+/* 업데이트 내려받기 → 시스템 설치창 열기 (같은 서명이라 기록 유지) */
+async function natRunUpdate(){
+  if (!NAT || natState.updating) return;
+  natState.updating = true;
+  const bar = $("#importBar"), fill = $("#importFill");
+  $("#importLabel").textContent = "새 버전 내려받는 중…";
+  $("#importCount").textContent = "0%";
+  fill.classList.remove("indet"); fill.style.width = "0%";
+  bar.hidden = false;
+  try {
+    await NAT.call("updRun", {}, (d, n) => {
+      const pct = Math.round(d / n * 100);
+      fill.style.width = pct + "%";
+      $("#importCount").textContent = pct + "%";
+    });
+    openTextModal(
+      "새 버전 설치를 시작해요",
+      "곧 설치 화면이 열려요. 화면이 안 열리면 이 창을 닫고 다시 「업데이트」를 눌러 주세요.",
+      "1. 「설치」 또는 「업데이트」를 누르세요.\n" +
+      "2. 처음이라면 '이 출처 허용' 화면이 나올 수 있어요 → 켜고 뒤로가기 → 다시 「업데이트」.\n" +
+      "3. 설치가 끝나면 「열기」! 정리하던 기록은 전부 그대로예요.",
+      null, { copy: false });
+  } catch(e){
+    toast("업데이트를 내려받지 못했어요 · 인터넷 연결을 확인하고 다시 해보세요", 6000);
+  } finally {
+    natState.updating = false;
+    bar.hidden = true; fill.style.width = "0%";
+  }
 }
 function natRenderHero(){
   if (!NAT) return;
@@ -2783,6 +2846,7 @@ async function natBoot(){
     if (!r.ok) throw new Error("save");
   } };
   natPatchUI();
+  natCheckUpdate(false);   // 새 버전 조용히 확인 (실패해도 무시)
   try { natState.access = await NAT.call("access"); } catch(e){ natState.access = null; }
   natRenderHero();
   if (natState.access && natState.access.granted) natSync(false);
@@ -2796,6 +2860,8 @@ document.addEventListener("click", (e) => {
   if (t.closest("#natMore")) { natSync("more"); return; }
   if (t.closest("#natSettings")) { NAT.call("settings").catch(() => {}); return; }
   if (t.closest("#btnNatDelete") || t.closest("[data-natdelete]")) { natDeleteTrash(); return; }
+  if (t.closest("#natUpdBtn")) { natRunUpdate(); return; }
+  if (t.closest("#natUpdCheck")) { natCheckUpdate(true); return; }
 });
 
 /* 앱으로 다시 돌아왔을 때(사진을 찍거나 지우고 온 경우) 목록을 조용히 맞춤 */

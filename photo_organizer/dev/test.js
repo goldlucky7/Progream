@@ -290,6 +290,15 @@ const URL = 'http://127.0.0.1:8901/index.html';
         }
         if (method === 'saveText') { window.__mock.saved.push(p.filename); return fin(true, { ok: true, where: 'Download' }); }
         if (method === 'settings') return fin(true, { ok: true });
+        if (method === 'updCheck') return fin(true, { cur: 3, latest: window.__mock.updLatest || 3 });
+        if (method === 'updRun') {
+          let d = 0;
+          const t = setInterval(() => {
+            d += 50; window.__anProg(id, Math.min(d, 100), 100);
+            if (d >= 100) { clearInterval(t); window.__anDone(id, true, JSON.stringify({ ok: true })); }
+          }, 3);
+          return;
+        }
         fin(false, { error: 'unknown ' + method });
       }
     };`;
@@ -369,6 +378,20 @@ const URL = 'http://127.0.0.1:8901/index.html';
   await np.click('#btnBackup');
   await np.waitForFunction(() => window.__mock.saved.length === 1, null, { timeout: 10000 });
   check('nat backup via saveText', await np.evaluate(() => window.__mock.saved[0]) === '사진정리_백업.json');
+
+  // 6-2) 앱 내 업데이트: 최신이면 조용 → 새 버전 감지 시 배너 → 버튼으로 내려받기·설치 안내
+  check('nat no update banner when latest', await np.evaluate(() => document.querySelector('#natUpdate').hidden === true));
+  await np.evaluate(() => { window.__mock.updLatest = 99; });
+  await np.click('#natUpdCheck');
+  await np.waitForFunction(() => !document.querySelector('#natUpdate').hidden, null, { timeout: 10000 });
+  check('nat update banner shown', true);
+  await np.click('#tabbar button[data-go="library"]');
+  await np.click('#natUpdBtn');
+  await np.waitForSelector('#modalDim:not([hidden])', { timeout: 10000 });
+  check('nat update modal', (await np.locator('#trashListText').textContent()).includes('설치'));
+  check('nat updRun called', await np.evaluate(() => window.__mock.calls.some(c => c[0] === 'updRun')));
+  await np.click('#modalClose');
+  await np.evaluate(() => { window.__mock.updLatest = 3; });
 
   // 7) 다시 시작: 기록(폴더)·분석 결과 유지 + 갤러리에서 지워진 사진 반영
   await np.evaluate(() => {
