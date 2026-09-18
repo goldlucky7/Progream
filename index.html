@@ -1388,9 +1388,23 @@ function computeDupes(){
   const parent = new Map(cand.map(p => [p.id, p.id]));
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
   const uni = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
-  for (let i = 0; i < cand.length; i++) {
-    for (let j = i + 1; j < cand.length; j++) {
-      if (isSimilar(cand[i], cand[j])) uni(cand[i].id, cand[j].id);
+  // 밝기 차가 40을 넘으면 어차피 다른 사진(isSimilar가 거름) → 밝기 구간(폭 20)으로 나눠
+  // 이웃 구간끼리만 비교한다. 결과는 전수 비교와 동일하고, 수천 장에서도 빠르다.
+  const buckets = new Map();
+  for (const p of cand) {
+    const b = Math.floor(p.bright / 20);
+    if (!buckets.has(b)) buckets.set(b, []);
+    buckets.get(b).push(p);
+  }
+  for (const [b, arr] of buckets) {
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        if (isSimilar(arr[i], arr[j])) uni(arr[i].id, arr[j].id);
+      }
+      for (const nb of [b + 1, b + 2]) {
+        const other = buckets.get(nb);
+        if (other) for (const q of other) if (isSimilar(arr[i], q)) uni(arr[i].id, q.id);
+      }
     }
   }
   const groups = new Map();
@@ -1564,7 +1578,7 @@ function renderThemes(){
   const tagging = state.tagTheme === t;
   let html = '<div class="themeTop"><h2>' + esc(t) + " · " + ids.length + "장</h2><div>" +
     '<button class="miniBtn acc" data-tagmode="' + esc(t) + '">' + (tagging ? "담기 끝내기" : "＋ 사진 담기") + "</button>" +
-    (ids.length ? '<button class="miniBtn" data-exportzip="' + esc(t) + '">📥 휴대폰에 저장</button>' : "") +
+    (ids.length ? '<button class="miniBtn" data-exportzip="' + esc(t) + '">' + (NAT ? "📥 갤러리에 앨범 만들기" : "📥 휴대폰에 저장") + "</button>" : "") +
     (state.customThemes.includes(t) ? '<button class="miniBtn dgr" data-delTheme="' + esc(t) + '">폴더 삭제</button>' : "") +
     "</div></div>";
   if (tagging) {
@@ -1639,8 +1653,11 @@ function renderClean(){
   html += "</div>";
   const tn = s.trash.length, tsize = s.trash.reduce((a, p) => a + p.size, 0);
   html += '<div class="trashSummary"><div class="row"><b>🧺 정리함</b><span class="n">' + tn + "장 · " + fmtSize(tsize) + "</span></div>" +
-    '<p>정리함에 담긴 사진의 파일명 목록을 보고, 갤러리 앱에서 삭제하면 정리 끝! (여기서는 원본이 지워지지 않아 안전해요)</p>' +
-    '<div class="btns"><button class="bClear" data-clean="trash">담긴 사진 보기</button><button class="bList" id="btnTrashList"' + (tn ? "" : " disabled") + ">삭제 목록 만들기</button></div></div>";
+    (NAT
+      ? '<p>아래 버튼 한 번이면 갤러리에서 바로 지워져요. 확인창이 한 번 나오고, 지운 사진은 갤러리 휴지통에 30일 보관돼 실수해도 되살릴 수 있어요.</p>' +
+        '<div class="btns"><button class="bClear" data-clean="trash">담긴 사진 보기</button><button class="bList" id="btnNatDelete"' + (tn ? "" : " disabled") + '>🧹 갤러리에서 바로 삭제</button></div></div>'
+      : '<p>정리함에 담긴 사진의 파일명 목록을 보고, 갤러리 앱에서 삭제하면 정리 끝! (여기서는 원본이 지워지지 않아 안전해요)</p>' +
+        '<div class="btns"><button class="bClear" data-clean="trash">담긴 사진 보기</button><button class="bList" id="btnTrashList"' + (tn ? "" : " disabled") + '>삭제 목록 만들기</button></div></div>');
   home.innerHTML = html;
 }
 function renderCleanDetail(s){
@@ -1667,8 +1684,12 @@ function renderCleanDetail(s){
     const arr = s.trash;
     html += back + "정리함 · " + arr.length + "장</h2>" +
       '<button class="miniBtn" data-trashclear="1"' + (arr.length ? "" : " disabled") + ">모두 꺼내기</button></div>" +
-      '<p class="detailNote">사진을 누르면 정리함에서 다시 꺼낼 수 있어요. 실제 파일은 지워지지 않았어요.</p>';
-    if (arr.length) html += '<div class="rowActions"><button class="dgr" data-trashdone="1">갤러리에서 삭제 끝냈어요 · 이 목록 비우기</button></div>';
+      (NAT
+        ? '<p class="detailNote">사진을 누르면 정리함에서 다시 꺼낼 수 있어요. 아래 버튼을 누르기 전에는 아무것도 지워지지 않아요.</p>'
+        : '<p class="detailNote">사진을 누르면 정리함에서 다시 꺼낼 수 있어요. 실제 파일은 지워지지 않았어요.</p>');
+    if (arr.length) html += NAT
+      ? '<div class="rowActions"><button class="dgr" data-natdelete="1">🧹 이 사진들 갤러리에서 삭제 (확인창 1번)</button></div>'
+      : '<div class="rowActions"><button class="dgr" data-trashdone="1">갤러리에서 삭제 끝냈어요 · 이 목록 비우기</button></div>';
     html += arr.length
       ? '<div class="grid">' + arr.map(p => { listIds.push(p.id); return tileHTML(p, "act"); }).join("") + "</div>"
       : '<p class="noRes">정리함이 비어 있어요.</p>';
@@ -1757,7 +1778,7 @@ function viewerClose(){
 function viewerRender(){
   const p = state.byId.get(state.viewerList[state.viewerIdx]);
   if (!p) return viewerClose();
-  if (!p.file && !p._origTried) {
+  if (!p.file && !p._origTried && !(NAT && p.nat)) {
     p._origTried = true;
     idbGetOriginal(recKey(p)).then((b) => {
       if (b && !$("#viewer").hidden && state.viewerList[state.viewerIdx] === p.id) { p.file = b; viewerRender(); }
@@ -1775,7 +1796,20 @@ function viewerRender(){
     d.textContent = msg;
     st.appendChild(d);
   };
-  if (vUrl && p.isVideo) {
+  if (NAT && p.nat && !p.isVideo) {
+    // 설치형 앱: 원본을 바로 스트리밍 (항상 원본 화질)
+    const im = new Image();
+    im.src = NAT.mediaUrl(p); im.alt = p.name;
+    im.onerror = () => { im.remove(); if (p.thumb) { const t2 = new Image(); t2.src = p.thumb; st.appendChild(t2); } };
+    st.appendChild(im);
+  } else if (NAT && p.nat && p.isVideo) {
+    if (p.thumb) { const tv = new Image(); tv.src = p.thumb; st.appendChild(tv); }
+    const pb = document.createElement("button");
+    pb.className = "vHint";
+    pb.textContent = "▶ 누르면 재생돼요 (동영상 앱으로 열기)";
+    pb.addEventListener("click", () => { NAT.call("open", { ref: natRef(p) }).catch(() => toast("재생할 앱을 찾지 못했어요")); });
+    st.appendChild(pb);
+  } else if (vUrl && p.isVideo) {
     const v = document.createElement("video");
     v.src = vUrl; v.controls = true; v.playsInline = true; v.preload = "metadata";
     st.appendChild(v);
@@ -2096,7 +2130,11 @@ function bindEvents(){
     }
     if (t.closest("[data-tagdone]")) { stopTagMode(); return; }
     const exZip = t.closest("[data-exportzip]");
-    if (exZip) { exportFolderZip(exZip.dataset.exportzip); return; }
+    if (exZip) {
+      if (NAT) natCreateAlbum(exZip.dataset.exportzip);
+      else exportFolderZip(exZip.dataset.exportzip);
+      return;
+    }
     const delTheme = t.closest("[data-delTheme]");
     if (delTheme) {
       const th = delTheme.dataset.deltheme;
@@ -2217,8 +2255,11 @@ function bindEvents(){
     handlePicked(e.target.files, "폴더에서 사진·동영상을 찾지 못했어요");
     e.target.value = "";
   });
-  /* 사진 추가 선택 시트 */
-  $("#btnAdd").addEventListener("click", () => { addDim.hidden = false; });
+  /* 사진 추가 선택 시트 (설치형 앱에서는 '새로 읽기' 버튼) */
+  $("#btnAdd").addEventListener("click", () => {
+    if (NAT) { natSync(true); return; }
+    addDim.hidden = false;
+  });
   $("#addCancel").addEventListener("click", () => { addDim.hidden = true; });
   addDim.addEventListener("click", (e) => { if (e.target.id === "addDim") addDim.hidden = true; });
   $("#btnBulkHelp3").addEventListener("click", () => { addDim.hidden = true; showBulkHelp(); });
@@ -2391,14 +2432,337 @@ function bindEvents(){
   });
 }
 
+/* ==================== 네이티브(설치형 안드로이드 앱) 브리지 ==================== */
+/* 설치형 앱(WebView)은 window.AndroidNative를 주입한다.
+   - 브라우저(웹 버전)에서는 NAT=null 이라 이 구획 전체가 비활성 — 웹 동작 불변.
+   - 통신 규약: AndroidNative.call(id, method, paramsJson) → window.__anDone(id, ok, payloadJson)
+     진행률 window.__anProg(id, done, total) · 환경정보 AndroidNative.getInfo() (동기)
+   - 썸네일/원본은 URL 템플릿(thumbTpl/mediaTpl)로 스트리밍 — base64 왕복 없음 */
+const NAT = (() => {
+  try {
+    if (!window.AndroidNative || typeof window.AndroidNative.call !== "function") return null;
+    const info = JSON.parse(window.AndroidNative.getInfo());
+    const pend = new Map();
+    let seq = 0;
+    window.__anDone = (id, ok, payload) => {
+      const cb = pend.get(id);
+      if (!cb) return;
+      pend.delete(id);
+      let data = {};
+      try { data = JSON.parse(payload); } catch(e){}
+      if (ok) cb.res(data); else cb.rej(new Error(data.error || "native"));
+    };
+    window.__anProg = (id, done, total) => {
+      const cb = pend.get(id);
+      if (cb && cb.prog) cb.prog(done, total);
+    };
+    const call = (method, params, prog) => new Promise((res, rej) => {
+      const id = "n" + (++seq);
+      pend.set(id, { res, rej, prog });
+      try { window.AndroidNative.call(id, method, JSON.stringify(params || {})); }
+      catch(e){ pend.delete(id); rej(e); }
+    });
+    const fill = (tpl, p) => tpl.replace("{mt}", p.nat.mt).replace("{id}", p.nat.id);
+    return {
+      info, call,
+      thumbUrl: (p) => fill(info.thumbTpl, p),
+      mediaUrl: (p) => fill(info.mediaTpl, p),
+    };
+  } catch(e){ return null; }
+})();
+window.NativeBridge = NAT; // 존재 여부로 네이티브 모드 판별 (인수인계 규약)
+
+const natState = { access: null, syncing: false, analyzing: false };
+let natAnaCache = new Map();   // recKey → 지난 실행 분석 결과 (IndexedDB photos 스토어)
+const natRef = (p) => p.nat.mt + ":" + p.nat.id;
+
+/* 갤러리 전체 읽기: 권한 확인 → MediaStore 목록 → 상태와 합치기 */
+async function natSync(byUser){
+  if (!NAT || natState.syncing || state.importing) return;
+  natState.syncing = true;
+  const bar = $("#importBar"), fill = $("#importFill");
+  try {
+    let acc = await NAT.call("access");
+    if (!acc.granted && byUser !== "quiet") acc = await NAT.call("request");
+    natState.access = acc;
+    natRenderHero();
+    if (!acc.granted) {
+      if (byUser === true) toast("사진 접근을 허용해야 갤러리를 볼 수 있어요", 5000);
+      return;
+    }
+    $("#importLabel").textContent = "갤러리를 읽는 중… (기기 안에서만 처리돼요)";
+    $("#importCount").textContent = "잠깐이면 돼요";
+    fill.classList.add("indet");
+    bar.hidden = false;
+    const res = await NAT.call("list");
+    const items = res.items || [];
+    const seen = new Set();
+    let added = 0;
+    for (const it of items) {
+      const k = it.name + "|" + it.size + "|" + it.lm;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const exist = state.byKey.get(k);
+      if (exist) {
+        exist.nat = { id: it.id, mt: it.mt };
+        if (!exist.thumb) exist.thumb = NAT.thumbUrl(exist);
+        continue;
+      }
+      const p = {
+        id: uid(), file: null, name: it.name, size: it.size, lm: it.lm,
+        isVideo: it.mt === "v",
+        date: it.taken > 0 ? it.taken : it.lm,
+        dateSrc: it.taken > 0 ? "exif" : "file",
+        w: it.w || 0, h: it.h || 0, thumb: null, dur: it.dur || 0,
+        hh: 0, hl: 0, vh: 0, vl: 0, hasHash: false, blur: 0, bright: 128,
+        shot: false, autoT: new Set(), manT: new Set(), noAuto: new Set(),
+        fav: false, trash: false, sample: false,
+        nat: { id: it.id, mt: it.mt },
+      };
+      p.thumb = NAT.thumbUrl(p);
+      if (p.isVideo) p.autoT.add(AUTO_LABEL.video);
+      if (!p.isVideo && (SHOT_RE.test(p.name) || /screenshot|스크린샷|캡처/i.test(it.bucket || ""))) {
+        p.shot = true; p.autoT.add(AUTO_LABEL.shot);
+      }
+      const c = natAnaCache.get(k);           // 지난 실행 때 분석해 둔 값 재사용
+      if (c && c.hasHash) {
+        p.blur = c.blur || 0; p.bright = (c.bright == null ? 128 : c.bright);
+        p.hh = c.hh || 0; p.hl = c.hl || 0; p.vh = c.vh || 0; p.vl = c.vl || 0;
+        p.hasHash = true;
+      }
+      restoreRec(p);
+      state.photos.push(p);
+      state.byId.set(p.id, p);
+      state.byKey.set(k, p);
+      added++;
+    }
+    // 갤러리에서 지워진 사진은 목록에서도 뺀다 (갤러리가 원본)
+    const gone = state.photos.filter(p => !p.sample && !p.file && !seen.has(recKey(p)));
+    if (gone.length) removePhotos(gone);
+    fill.classList.remove("indet");
+    bar.hidden = true;
+    rebuild(); computeDupes(); render();
+    natRenderHero();
+    if (byUser === true) {
+      const parts = [];
+      if (added) parts.push(added + "장을 새로 읽었어요");
+      if (gone.length) parts.push("갤러리에서 지워진 " + gone.length + "장을 뺐어요");
+      toast(parts.length ? parts.join(" · ") : "갤러리와 똑같아요 · 새 사진 없음");
+    }
+    natAnalyzeAll();
+  } catch(e){
+    toast("갤러리를 읽지 못했어요 · 앱을 껐다 다시 켜 보세요", 5000);
+  } finally {
+    natState.syncing = false;
+    fill.classList.remove("indet");
+    if (!state.importing && !natState.analyzing) bar.hidden = true;
+  }
+}
+
+/* 중복·흐림 분석: 썸네일을 불러와 기존 웹 분석 코드(analyze)를 그대로 사용 */
+let natAnaRun = 0;
+async function natAnalyzeAll(){
+  if (!NAT) return;
+  const run = ++natAnaRun;
+  const todo = state.photos.filter(p => p.nat && !p.isVideo && !p.hasHash);
+  if (!todo.length) return;
+  natState.analyzing = true;
+  const bar = $("#importBar"), fill = $("#importFill");
+  $("#importLabel").textContent = "사진 살펴보는 중… (중복·흐림 찾기 · 그동안 앱을 써도 돼요)";
+  fill.classList.remove("indet");
+  bar.hidden = false;
+  let done = 0;
+  const total = todo.length;
+  $("#importCount").textContent = "0 / " + total;
+  const work = async () => {
+    while (todo.length) {
+      if (run !== natAnaRun) return;
+      const p = todo.shift();
+      if (!state.byId.has(p.id)) { done++; continue; }   // 그 사이 삭제된 사진
+      try {
+        const img = new Image();
+        img.decoding = "async";
+        img.src = NAT.thumbUrl(p);
+        await img.decode();
+        const sw = img.naturalWidth, sh = img.naturalHeight;
+        if (!p.w) { p.w = sw; p.h = sh; }
+        const a = analyze(img, sw, sh);
+        p.blur = a.blur; p.bright = a.bright; p.hh = a.hh; p.hl = a.hl; p.vh = a.vh; p.vl = a.vl;
+        p.hasHash = true;
+        idbSavePhoto(p, null);   // 다음 실행부터는 분석 생략 (썸네일은 저장 안 함)
+      } catch(e){ /* 썸네일이 없는 형식은 목록만 유지 */ }
+      done++;
+      if (done % 20 === 0 || done === total) {
+        $("#importCount").textContent = done + " / " + total;
+        fill.style.width = Math.round(done / total * 100) + "%";
+      }
+      if (done % 200 === 0) { computeDupes(); render(); }
+      await new Promise(r => setTimeout(r, 0));
+    }
+  };
+  await Promise.all([work(), work(), work()]);
+  if (run !== natAnaRun) return;
+  natState.analyzing = false;
+  if (!state.importing && !natState.syncing) bar.hidden = true;
+  computeDupes();
+  render();
+  toast("사진 살펴보기 끝! 정리 탭에서 정리 후보를 확인하세요");
+}
+
+/* 폴더 → 갤러리에 진짜 앨범 만들기 (Pictures/<폴더명> 복사, 중복 저장 없음) */
+async function natCreateAlbum(t){
+  if (!NAT || state.importing || natState.syncing) return;
+  const all = state.photos.filter(p => !p.trash && themesOf(p).includes(t));
+  const ps = all.filter(p => p.nat);
+  const miss = all.length - ps.length;   // 샘플 사진 등
+  if (!ps.length) {
+    toast("이 폴더에는 갤러리 사진이 없어요" + (miss ? " · 샘플 사진은 앨범으로 저장되지 않아요" : ""), 5000);
+    return;
+  }
+  const safe = t.replace(/[\\/:*?"<>|]/g, "_");
+  natAnaRun++;                       // 진행 막대를 앨범 작업이 독점 (분석은 뒤에 다시 이어감)
+  natState.analyzing = false;
+  const bar = $("#importBar"), fill = $("#importFill");
+  $("#importLabel").textContent = '"' + safe + '" 앨범을 갤러리에 만드는 중…';
+  $("#importCount").textContent = "0 / " + ps.length;
+  fill.classList.remove("indet"); fill.style.width = "0%";
+  bar.hidden = false;
+  try {
+    const r = await NAT.call("album", { name: safe, refs: ps.map(natRef) }, (d, n) => {
+      $("#importCount").textContent = d + " / " + n;
+      fill.style.width = Math.round(d / n * 100) + "%";
+    });
+    openTextModal(
+      "갤러리에 앨범을 만들었어요 🎉",
+      '"' + (r.album || safe) + '" 폴더가 갤러리의 진짜 앨범이 됐어요.',
+      "갤러리 앱 → 앨범 → 「" + (r.album || safe) + "」 에서 확인하세요.\n\n" +
+      "· 새로 담은 사진: " + (r.ok || 0) + "장\n" +
+      (r.skip ? "· 이미 앨범에 있던 " + r.skip + "장은 그대로 뒀어요 (중복 저장 안 함)\n" : "") +
+      (r.fail ? "· " + r.fail + "장은 저장하지 못했어요 (다시 해보세요)\n" : "") +
+      (miss ? "· 샘플 사진 " + miss + "장은 제외했어요\n" : "") +
+      "· 사진은 복사본이에요 — 원본은 그대로 있어요.",
+      null, { copy: false });
+  } catch(e){
+    toast("앨범 만들기에 실패했어요 · 다시 해보세요", 5000);
+  } finally {
+    bar.hidden = true; fill.style.width = "0%";
+    natAnalyzeAll();   // 멈춰 둔 사진 살펴보기 이어서
+  }
+}
+
+/* 정리함 → 갤러리에서 바로 삭제 (시스템 확인창 1번 → 휴지통 30일 보관) */
+async function natDeleteTrash(){
+  if (!NAT) return;
+  const ps = state.photos.filter(p => p.trash);
+  const nats = ps.filter(p => p.nat);
+  const rest = ps.filter(p => !p.nat);   // 샘플 등: 목록에서만 제거
+  if (!nats.length) {
+    if (rest.length) { removePhotos(rest); state.cleanView = null; render(); toast("샘플 사진을 목록에서 뺐어요"); }
+    else toast("정리함이 비어 있어요");
+    return;
+  }
+  try {
+    const r = await NAT.call("delete", { refs: nats.map(natRef) });
+    if (r.done) {
+      removePhotos(nats.concat(rest));
+      state.cleanView = null;
+      render();
+      toast(r.count + "장을 갤러리에서 삭제했어요 · 실수했다면 갤러리 휴지통(30일 보관)에서 되살릴 수 있어요", 6000);
+    } else {
+      toast("삭제를 취소했어요 · 사진은 그대로 있어요");
+    }
+  } catch(e){ toast("삭제하지 못했어요 · 다시 해보세요"); }
+}
+
+/* 네이티브 모드 UI 손질: 불러오기 버튼 숨기고 갤러리 버튼·배너 추가 */
+function natPatchUI(){
+  $("#dirLabel").hidden = true;
+  const l1 = document.querySelector('#emptyState label[for="fileIn2"]'); if (l1) l1.hidden = true;
+  const l2 = document.querySelector('#emptyState label[for="allIn"]'); if (l2) l2.hidden = true;
+  $("#btnBulkHelp").hidden = true;
+  const h2 = $("#btnBulkHelp2");
+  if (h2) { const row = h2.closest(".dataRow"); row.hidden = true; if (row.previousElementSibling) row.previousElementSibling.hidden = true; }
+  $("#btnAdd").innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg> 새로 읽기';
+  const hb = document.querySelector("#emptyState .heroBtns");
+  const b = document.createElement("button");
+  b.id = "natStart"; b.className = "btnPrimary"; b.textContent = "📷 내 갤러리 불러오기";
+  hb.prepend(b);
+  const s = document.createElement("button");
+  s.id = "natSettings"; s.className = "btnSoft"; s.hidden = true;
+  s.textContent = "허용 창이 안 나오면 → 앱 설정 열기";
+  b.after(s);
+  const pb = document.createElement("div");
+  pb.id = "natPartial"; pb.className = "tagBanner"; pb.hidden = true;
+  pb.innerHTML = "<span>지금은 <b>일부 사진만</b> 보고 있어요. 갤러리 전체를 정리하려면 전체 허용이 좋아요.</span><button id=\"natMore\">전체 허용하기</button>";
+  $("#tab-library").insertBefore(pb, $("#monthChips"));
+}
+function natRenderHero(){
+  if (!NAT) return;
+  const acc = natState.access;
+  const denied = !!(acc && !acc.granted);
+  const st = $("#natStart");
+  if (st) st.textContent = denied ? "📷 사진 보기 허용하고 시작하기" : "📷 내 갤러리 불러오기";
+  const se = $("#natSettings"); if (se) se.hidden = !denied;
+  const pb = $("#natPartial");
+  if (pb) pb.hidden = !(acc && acc.granted && acc.partial);
+}
+
+async function natBoot(){
+  dlNS = { save: async ({ filename, data }) => {
+    const r = await NAT.call("saveText", { filename, text: data });
+    if (!r.ok) throw new Error("save");
+  } };
+  natPatchUI();
+  try { natState.access = await NAT.call("access"); } catch(e){ natState.access = null; }
+  natRenderHero();
+  if (natState.access && natState.access.granted) natSync(false);
+}
+
+/* 네이티브 전용 버튼들 (웹에서는 해당 요소가 없어 동작 없음) */
+document.addEventListener("click", (e) => {
+  if (!NAT) return;
+  const t = e.target;
+  if (t.closest("#natStart")) { natSync(true); return; }
+  if (t.closest("#natMore")) { natSync(true); return; }
+  if (t.closest("#natSettings")) { NAT.call("settings").catch(() => {}); return; }
+  if (t.closest("#btnNatDelete") || t.closest("[data-natdelete]")) { natDeleteTrash(); return; }
+});
+
+/* 앱으로 다시 돌아왔을 때(사진을 찍거나 지우고 온 경우) 목록을 조용히 맞춤 */
+let natResumeAt = 0;
+window.__anResumed = () => {
+  if (!NAT || !natState.access || !natState.access.granted) return;
+  const now = Date.now();
+  if (now - natResumeAt < 4000) return;
+  natResumeAt = now;
+  natSync("quiet");
+};
+
+/* 안드로이드 뒤로가기: 열린 화면부터 차례로 닫고, 남으면 홈으로 (앱 유지) */
+window.__anBack = () => {
+  if (!$("#viewer").hidden) { viewerClose(); return "1"; }
+  for (const id of ["addDim", "sheetDim", "modalDim"]) {
+    const el = $("#" + id);
+    if (!el.hidden) { el.hidden = true; return "1"; }
+  }
+  if (state.tagTheme) { stopTagMode(); return "1"; }
+  if (state.cleanView) { state.cleanView = null; renderClean(); return "1"; }
+  if (state.tab === "themes" && state.curTheme) { state.curTheme = null; renderThemes(); return "1"; }
+  if (state.selectOn) { toggleSelectMode(false); return "1"; }
+  if (state.tab !== "library") { goTab("library"); return "1"; }
+  return "0";
+};
+
 /* ---------- 시작 ---------- */
 (async function boot(){
   bindEvents();
   idb = await idbOpen();
   await idbLoadAll();
   // 자동 저장된 사진 복원 (원본 파일 없이 미리보기·정리 상태만)
+  // 네이티브 앱에서는 갤러리가 원본이므로 목록 복원 대신 분석 결과만 재사용
   const cached = await idbLoadPhotos();
-  for (const [k, r] of cached) {
+  if (NAT) { natAnaCache = new Map(cached); }
+  else for (const [k, r] of cached) {
     if (state.byKey.has(k)) continue;
     const p = {
       id: uid(), file: null, name: r.name || "이름없음", size: r.size || 0, lm: r.lm || 0,
@@ -2423,12 +2787,15 @@ function bindEvents(){
   const t = lsGet("po.tab");
   if (["library","themes","clean","search"].includes(t)) state.tab = t;
   goTab(state.tab);
-  if (state.photos.length) toast("지난 정리 상태 " + state.photos.length + "장을 복원했어요");
-  else if (savedRecs.size) toast("지난 정리 기록을 기억하고 있어요 · 같은 사진을 불러오면 그대로 복원돼요");
+  if (!NAT) {
+    if (state.photos.length) toast("지난 정리 상태 " + state.photos.length + "장을 복원했어요");
+    else if (savedRecs.size) toast("지난 정리 기록을 기억하고 있어요 · 같은 사진을 불러오면 그대로 복원돼요");
+  }
   // 파일 저장 기능은 지원되는 환경에서만 켜짐
   try {
     const u = window.claude && window.claude.use && window.claude.use("downloads");
     if (u && u.then) u.then(d => { dlNS = d; }).catch(() => {});
   } catch(e){}
+  if (NAT) natBoot();
 })();
 </script>
