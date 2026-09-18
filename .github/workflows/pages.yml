@@ -1,5 +1,7 @@
 name: 사진 정리 도우미 웹 배포 (GitHub Pages)
 
+# photo_organizer가 바뀌면 gh-pages 브랜치로 자동 반영 →
+# https://goldlucky7.github.io/Progream/ 에 게시됩니다.
 on:
   push:
     branches: [claude/phone-gallery-organizer-ewh7sz, main, master]
@@ -9,9 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -20,16 +20,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
+      - name: 배포 폴더 준비
+        run: |
+          mkdir -p _site
+          cp photo_organizer/index.html _site/
+          touch _site/.nojekyll
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: photo_organizer
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          publish_branch: gh-pages
+          commit_message: "웹 배포 자동 업데이트"
