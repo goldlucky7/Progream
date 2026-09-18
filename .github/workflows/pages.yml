@@ -25,7 +25,7 @@ jobs:
       - name: 배포 폴더 준비
         run: |
           mkdir -p _site
-          cp photo_organizer/index.html _site/
+          cp photo_organizer/index.html photo_organizer/manifest.webmanifest photo_organizer/icon-192.png photo_organizer/icon-512.png _site/
           touch _site/.nojekyll
       - uses: peaceiris/actions-gh-pages@v4
         with:
