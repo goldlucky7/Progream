@@ -197,7 +197,12 @@ const URL = 'http://127.0.0.1:8901/index.html';
   });
   check('export recover from originals', recover.n === 1 && recover.ok === 1, JSON.stringify(recover));
   // 캐시 상태에서 뷰어 열기 (원본 없음 → 미리보기 + 안내)
-  await page.locator('#libGroups .tile').first().click();
+  // 첫 타일은 날짜에 따라 '폴더에 담겨 원본이 보관된 사진'일 수 있어 (그 경우 원본 화질로
+  // 자동 승격되는 게 정상) 폴더에 담긴 적 없는 스크린샷 사진으로 고정해서 확인한다.
+  await page.evaluate(() => {
+    const q = state.photos.find(x => x.name === 'Screenshot_20250315.png');
+    document.querySelector('#libGroups .tile[data-id="' + q.id + '"]').click();
+  });
   await page.waitForSelector('#viewer:not([hidden])');
   check('viewer hint without original', await page.locator('#vStage .vHint').count() === 1);
   await page.click('#vClose');
@@ -228,6 +233,159 @@ const URL = 'http://127.0.0.1:8901/index.html';
   await page.waitForTimeout(800);
   const persisted = await page.evaluate(() => state.photos.length);
   check('removal persisted', persisted === afterDone, persisted + ' vs ' + afterDone);
+
+  await ctx.close();
+
+  /* ================= 네이티브(설치형 앱) 모드: AndroidNative 모의 객체로 검증 ================= */
+  // 설치형 앱에서는 안드로이드가 window.AndroidNative를 주입한다. 여기서는 같은 규약의
+  // 가짜 객체를 먼저 심어 두고, 갤러리 자동 읽기 → 분석 → 앨범 만들기 → 바로 삭제를 검증한다.
+  const NAT_ITEMS = [
+    { id: 'dup_1.jpg', mt: 'i', name: 'dup_1.jpg', size: 11111, lm: 1714870000000, taken: 1714875600000, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'dup_2.jpg', mt: 'i', name: 'dup_2.jpg', size: 22222, lm: 1714870030000, taken: 1714875630000, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'blurry_1.jpg', mt: 'i', name: 'blurry_1.jpg', size: 33333, lm: 1714956400000, taken: 1714962000000, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'dark_1.jpg', mt: 'i', name: 'dark_1.jpg', size: 44444, lm: 1714956500000, taken: 1714962100000, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'IMG_2024_a.jpg', mt: 'i', name: 'IMG_2024_a.jpg', size: 55555, lm: 1736899200000, taken: 0, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'IMG_2024_c.jpg', mt: 'i', name: 'IMG_2024_c.jpg', size: 66666, lm: 1714870200000, taken: 1714875800000, mime: 'image/jpeg', w: 800, h: 600, dur: 0, bucket: 'Camera' },
+    { id: 'noexif.jpg', mt: 'i', name: 'noexif.jpg', size: 77777, lm: 1714870300000, taken: 0, mime: 'image/png', w: 390, h: 844, bucket: 'Screenshots', dur: 0 },
+    { id: 'IMG_2024_b.jpg', mt: 'v', name: 'video_b.mp4', size: 88888, lm: 1714870400000, taken: 1714876000000, mime: 'video/mp4', w: 1920, h: 1080, dur: 12.5, bucket: 'Camera' },
+  ];
+  const mockScript = (granted, partial) => `
+    window.__mock = { calls: [], granted: ${granted}, partial: ${partial}, saved: [],
+      items: JSON.parse(${JSON.stringify(JSON.stringify(NAT_ITEMS))}) };
+    window.AndroidNative = {
+      getInfo(){ return JSON.stringify({ platform: 'android', ver: '1.0-test', sdk: 34,
+        thumbTpl: 'dev/testpics/{id}', mediaTpl: 'dev/testpics/{id}' }); },
+      call(id, method, params){
+        const p = JSON.parse(params || '{}');
+        window.__mock.calls.push([method, p]);
+        const fin = (ok, payload) => setTimeout(() => window.__anDone(id, ok, JSON.stringify(payload)), 5);
+        if (method === 'access') return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial });
+        if (method === 'request') return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial });
+        if (method === 'list') {
+          // 삭제된 항목은 리로드(재시작) 후에도 목록에서 빠져 있어야 실제 기기와 같다
+          const rm = JSON.parse(localStorage.getItem('__mockRm') || '[]');
+          return fin(true, { items: window.__mock.items.filter(it => !rm.includes(String(it.id))) });
+        }
+        if (method === 'album') {
+          let d = 0; const n = p.refs.length;
+          const t = setInterval(() => {
+            d++; window.__anProg(id, d, n);
+            if (d >= n) { clearInterval(t); window.__anDone(id, true, JSON.stringify({ ok: n, skip: 0, fail: 0, album: p.name })); }
+          }, 3);
+          return;
+        }
+        if (method === 'delete') {
+          const ids = p.refs.map(r => r.slice(r.indexOf(':') + 1));
+          const rm = JSON.parse(localStorage.getItem('__mockRm') || '[]');
+          localStorage.setItem('__mockRm', JSON.stringify(rm.concat(ids)));
+          return fin(true, { done: true, count: p.refs.length });
+        }
+        if (method === 'saveText') { window.__mock.saved.push(p.filename); return fin(true, { ok: true, where: 'Download' }); }
+        if (method === 'settings') return fin(true, { ok: true });
+        fin(false, { error: 'unknown ' + method });
+      }
+    };`;
+
+  const nctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const np = await nctx.newPage();
+  np.on('pageerror', e => errors.push('native pageerror: ' + e.message));
+  np.on('console', m => { if (m.type() === 'error') errors.push('native console: ' + m.text()); });
+  await np.addInitScript(mockScript(true, false));
+  await np.goto(URL);
+
+  // 1) 권한 있음 → 갤러리 8개 자동 로드
+  await np.waitForFunction(() => typeof state !== 'undefined' && state.photos.length === 8 && !natState.syncing, null, { timeout: 20000 });
+  check('nat auto load 8', true);
+  check('nat mode detected', await np.evaluate(() => !!window.NativeBridge));
+  check('nat web import hidden', await np.evaluate(() => document.querySelector('#dirLabel').hidden === true));
+  check('nat refresh button label', (await np.locator('#btnAdd').textContent()).includes('새로 읽기'));
+  check('nat thumbs use bridge url', await np.evaluate(() => state.photos.every(p => (p.thumb || '').startsWith('dev/testpics/'))));
+  check('nat exif month', await np.locator('#libGroups').textContent().then(t => t.includes('2024년 5월')));
+  check('nat file-date month', await np.locator('#libGroups').textContent().then(t => t.includes('2025년 1월')));
+  check('nat video badge', await np.evaluate(() => state.photos.some(p => p.isVideo && p.nat && p.nat.mt === 'v')));
+  check('nat shot via bucket', await np.evaluate(() => { const q = state.photos.find(x => x.name === 'noexif.jpg'); return q && q.shot; }));
+
+  // 2) 백그라운드 분석 완료 → 중복·흐림·어두움
+  await np.waitForFunction(() => state.photos.filter(p => !p.isVideo).every(p => p.hasHash), null, { timeout: 30000 });
+  await np.waitForFunction(() => !natState.analyzing, null, { timeout: 20000 });
+  check('nat analysis done', true);
+  const nsets = await np.evaluate(() => { const s = cleanSets(); return { dup: state.dupGroups.map(g => g.map(p => p.name)), blur: s.blur.map(p => p.name), dark: s.dark.map(p => p.name) }; });
+  check('nat dup pair found', nsets.dup.some(g => g.includes('dup_1.jpg') && g.includes('dup_2.jpg')), JSON.stringify(nsets.dup));
+  check('nat dark found', nsets.dark.includes('dark_1.jpg'), JSON.stringify(nsets.dark));
+
+  // 3) 뷰어: 사진은 원본 스트리밍, 동영상은 재생 버튼
+  await np.evaluate(() => { const q = state.photos.find(x => x.name === 'dup_1.jpg'); document.querySelector('.tile[data-id="' + q.id + '"]').click(); });
+  await np.waitForSelector('#viewer:not([hidden])');
+  check('nat viewer original url', await np.evaluate(() => { const im = document.querySelector('#vStage img'); return im && im.src.includes('dev/testpics/dup_1.jpg'); }));
+  check('nat back closes viewer', await np.evaluate(() => window.__anBack()) === '1' && await np.locator('#viewer').isHidden());
+  await np.evaluate(() => { const q = state.photos.find(x => x.isVideo); document.querySelector('.tile[data-id="' + q.id + '"]').click(); });
+  await np.waitForSelector('#viewer:not([hidden])');
+  check('nat video play button', (await np.locator('#vStage .vHint').textContent()).includes('재생'));
+  await np.evaluate(() => window.__anBack());
+
+  // 4) 폴더 → 갤러리 앨범 만들기
+  await np.evaluate(() => {
+    toggleThemeOn(state.photos.find(x => x.name === 'dup_1.jpg'), '테스트폴더');
+    toggleThemeOn(state.photos.find(x => x.name === 'IMG_2024_c.jpg'), '테스트폴더');
+  });
+  await np.click('#tabbar button[data-go="themes"]');
+  await np.click('.tCard[data-open="테스트폴더"]');
+  check('nat album button label', (await np.locator('#themeBody').textContent()).includes('갤러리에 앨범 만들기'));
+  await np.click('[data-exportzip="테스트폴더"]');
+  await np.waitForSelector('#modalDim:not([hidden])');
+  check('nat album modal', (await np.locator('#trashListText').textContent()).includes('갤러리 앱 → 앨범'));
+  const albumCall = await np.evaluate(() => window.__mock.calls.find(c => c[0] === 'album'));
+  check('nat album call refs', !!albumCall && albumCall[1].name === '테스트폴더' && albumCall[1].refs.length === 2 && albumCall[1].refs.includes('i:dup_1.jpg'), JSON.stringify(albumCall));
+  await np.click('#modalClose');
+
+  // 5) 정리함 → 갤러리에서 바로 삭제 (모의 시스템 확인창 승인)
+  await np.evaluate(() => { ['dup_2.jpg', 'dark_1.jpg'].forEach(n => setTrash(state.photos.find(x => x.name === n), true)); });
+  await np.click('#tabbar button[data-go="clean"]');
+  check('nat delete button exists', await np.locator('#btnNatDelete').count() === 1);
+  await np.click('#btnNatDelete');
+  await np.waitForFunction(() => state.photos.length === 6, null, { timeout: 10000 });
+  const delCall = await np.evaluate(() => window.__mock.calls.find(c => c[0] === 'delete'));
+  check('nat delete call refs', !!delCall && delCall[1].refs.length === 2 && delCall[1].refs.includes('i:dup_2.jpg'), JSON.stringify(delCall));
+  check('nat deleted removed from list', await np.evaluate(() => !state.photos.some(p => p.name === 'dup_2.jpg' || p.name === 'dark_1.jpg')));
+
+  // 6) 백업 저장 → 네이티브 saveText 사용
+  await np.click('#tabbar button[data-go="search"]');
+  await np.click('#btnBackup');
+  await np.waitForFunction(() => window.__mock.saved.length === 1, null, { timeout: 10000 });
+  check('nat backup via saveText', await np.evaluate(() => window.__mock.saved[0]) === '사진정리_백업.json');
+
+  // 7) 다시 시작: 기록(폴더)·분석 결과 유지 + 갤러리에서 지워진 사진 반영
+  await np.evaluate(() => {
+    const rm = JSON.parse(localStorage.getItem('__mockRm') || '[]');
+    localStorage.setItem('__mockRm', JSON.stringify(rm.concat(['IMG_2024_a.jpg'])));
+  });
+  await np.reload();
+  await np.waitForFunction(() => typeof state !== 'undefined' && state.photos.length === 5 && !natState.syncing, null, { timeout: 20000 });
+  check('nat resync after restart (5 left)', true);
+  check('nat records restored', await np.evaluate(() => { const q = state.photos.find(x => x.name === 'dup_1.jpg'); return q && q.manT.has('테스트폴더'); }));
+  check('nat analysis cache reused', await np.evaluate(() => state.photos.filter(p => !p.isVideo).every(p => p.hasHash)));
+  check('nat dups recomputed from cache', await np.evaluate(() => state.dupGroups.length === 0));
+  await nctx.close();
+
+  // 8) 권한 거부 → 안내 버튼 → 허용 후 로드 / 일부 허용 배너
+  const dctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const dp = await dctx.newPage();
+  dp.on('pageerror', e => errors.push('denied pageerror: ' + e.message));
+  await dp.addInitScript(mockScript(false, false));
+  await dp.goto(URL);
+  await dp.waitForFunction(() => typeof state !== 'undefined' && typeof natState !== 'undefined' && natState.access !== null, null, { timeout: 20000 });
+  check('nat denied keeps empty', await dp.evaluate(() => state.photos.length === 0));
+  check('nat denied hero button', (await dp.locator('#natStart').textContent()).includes('허용'));
+  check('nat denied settings button', await dp.locator('#natSettings').isVisible());
+  await dp.click('#natStart');
+  await dp.waitForTimeout(300);
+  check('nat request attempted', await dp.evaluate(() => window.__mock.calls.some(c => c[0] === 'request')));
+  await dp.evaluate(() => { window.__mock.granted = true; window.__mock.partial = true; });
+  await dp.click('#natStart');
+  await dp.waitForFunction(() => state.photos.length === 8, null, { timeout: 20000 });
+  check('nat grant then load', true);
+  check('nat partial banner', await dp.locator('#natPartial').isVisible());
+  await dctx.close();
 
   console.log('\n=== OK (' + R.ok.length + ') ===\n' + R.ok.join('\n'));
   console.log('\n=== FAIL (' + R.fail.length + ') ===\n' + (R.fail.join('\n') || '(none)'));

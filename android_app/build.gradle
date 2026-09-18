@@ -1,0 +1,6 @@
+// 사진 정리 도우미 — 안드로이드 앱 (photo_organizer/index.html을 WebView로 감싸고
+// 갤러리 읽기/앨범 만들기/휴지통 삭제를 네이티브로 처리)
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+    id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
+}

@@ -1,0 +1,62 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'io.github.goldlucky7.photoorganizer'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "io.github.goldlucky7.photoorganizer"
+        minSdk 30            // Android 11 이상 (갤럭시 2019년 이후 모델 대부분)
+        targetSdk 34
+        // CI(GitHub Actions)가 빌드 번호를 넣어 줌 — 업데이트 설치가 되려면 항상 커져야 함
+        versionCode (System.getenv("APK_VERSION_CODE") ?: "1").toInteger()
+        versionName (System.getenv("APK_VERSION_NAME") ?: "1.0-dev")
+    }
+
+    signingConfigs {
+        release {
+            // 개인 사이드로딩용 키 (공개 저장소에 포함 — HANDOVER.md의 서명 방식 설명 참고)
+            storeFile file("../signing/photo-organizer.p12")
+            storeType "PKCS12"
+            storePassword "photo-organizer-2026"
+            keyAlias "photoorg"
+            keyPassword "photo-organizer-2026"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity-ktx:1.9.3'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}
+
+// 웹앱(단일 index.html)이 유일한 소스 — 빌드 때마다 photo_organizer에서 복사해 온다
+tasks.register('copyWebApp', Copy) {
+    from(rootProject.file('../photo_organizer')) {
+        include 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'
+    }
+    into layout.projectDirectory.dir('src/main/assets')
+}
+preBuild.dependsOn 'copyWebApp'

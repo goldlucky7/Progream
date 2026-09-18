@@ -4,7 +4,7 @@ name: 사진 정리 도우미 웹 배포 (GitHub Pages)
 # https://goldlucky7.github.io/Progream/ 에 게시됩니다.
 on:
   push:
-    branches: [claude/phone-gallery-organizer-ewh7sz, main, master]
+    branches: [claude/android-apk-build-install-x732yk, claude/phone-gallery-organizer-ewh7sz, main, master]
     paths:
       - "photo_organizer/**"
       - ".github/workflows/pages.yml"

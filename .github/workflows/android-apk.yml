@@ -1,0 +1,63 @@
+name: 안드로이드 설치 파일(APK) 만들기
+
+# android_app 또는 웹앱(index.html)이 바뀌면 APK를 새로 빌드해서
+# Releases의 "apk" 태그(항상 최신 1개)에 올립니다.
+# 사용자 다운로드 주소(변하지 않음):
+#   https://github.com/goldlucky7/Progream/releases/latest/download/PhotoOrganizer.apk
+on:
+  push:
+    branches: [claude/android-apk-build-install-x732yk, main, master]
+    paths:
+      - "android_app/**"
+      - "photo_organizer/index.html"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Gradle 캐시
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android_app/**/*.gradle', 'android_app/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: APK 빌드 (서명 포함)
+        env:
+          # 업데이트가 기존 앱 위에 설치되려면 버전 번호가 항상 커져야 함
+          APK_VERSION_CODE: ${{ github.run_number }}
+          APK_VERSION_NAME: "1.${{ github.run_number }}"
+        run: |
+          cd android_app
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../PhotoOrganizer.apk
+          ls -la ../PhotoOrganizer.apk
+
+      - name: Releases에 올리기 (항상 최신 1개 유지)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk
+          name: "📱 사진 정리 도우미 — 설치 파일 (항상 최신)"
+          body_path: android_app/RELEASE_NOTES.md
+          files: PhotoOrganizer.apk
+          make_latest: true

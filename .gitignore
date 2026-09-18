@@ -12,3 +12,12 @@ photo_organizer/dev/testpics/
 photo_organizer/dev/camera_test.zip
 photo_organizer/dev/export_test.zip
 photo_organizer/dev/backup_test.json
+
+# 안드로이드 빌드 산출물 (android_app)
+android_app/.gradle/
+android_app/build/
+android_app/app/build/
+android_app/local.properties
+android_app/.kotlin/
+# 빌드 때 photo_organizer에서 자동 복사되는 웹 파일
+android_app/app/src/main/assets/
