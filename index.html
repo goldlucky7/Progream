@@ -416,11 +416,11 @@ nav#tabbar{
             내 사진 불러오기
             <input id="fileIn2" type="file" accept="image/*,video/*" multiple hidden>
           </label>
-          <label class="btnSoft" for="allIn">📂 파일 앱에서 왕창 선택</label>
-          <label class="btnSoft" id="dirLabel" for="dirIn" hidden>
-            폴더째 불러오기 (컴퓨터)
+          <label class="btnSoft" id="dirLabel" for="dirIn">
+            📁 폴더째 불러오기 (한 방에 전부)
             <input id="dirIn" type="file" webkitdirectory multiple hidden>
           </label>
+          <label class="btnSoft" for="allIn">📂 파일 앱에서 골라 담기</label>
           <button id="btnSample" class="btnSoft">샘플 사진으로 구경하기</button>
         </div>
         <button id="btnBulkHelp" class="linkBtn">📚 '모두 선택'으로 한 번에 불러오는 방법</button>
@@ -539,9 +539,13 @@ nav#tabbar{
       <span aria-hidden="true">📷</span>
       <div><b>갤러리에서 고르기</b><small>몇 장만 고를 때 · 전체선택은 없어요</small></div>
     </label>
+    <label class="optRow" for="dirIn">
+      <span aria-hidden="true">📁</span>
+      <div><b>폴더째 불러오기</b><small>Camera 폴더 통째로 · 500장 제한 없음 (일부 폰은 지원 안 함)</small></div>
+    </label>
     <label class="optRow" for="allIn">
       <span aria-hidden="true">📂</span>
-      <div><b>파일 앱에서 왕창 선택</b><small>꾹 눌러 모두 선택 · Camera 폴더를 압축한 ZIP도 OK (500장 제한 없음)</small></div>
+      <div><b>파일 앱에서 골라 담기</b><small>꾹 누른 채 문지르면 여러 장 선택 · ZIP 파일도 OK</small></div>
     </label>
     <button class="optRow" id="btnBulkHelp3">
       <span aria-hidden="true">📚</span>
@@ -1766,7 +1770,24 @@ function openTextModal(title, sub, text, filename, opts){
   $("#modalDim").hidden = false;
 }
 const BULK_HELP =
-"🗜 500장 제한 없이 통째로 넣는 법 (추천!)\n" +
+"📁 1순위: [폴더째 불러오기] 버튼\n" +
+"1. 첫 화면(또는 사진 추가)의 [📁 폴더째 불러오기]를 누르세요.\n" +
+"2. '폴더 고르는 화면'이 뜨면 내장 저장공간 → DCIM → Camera\n" +
+"   폴더를 고르고 「이 폴더 사용(허용)」을 누르세요.\n" +
+"3. 폴더 안 사진이 500장 제한 없이 전부 들어와요!\n" +
+"   ※ 폰에 따라 이 기능이 안 되고 그냥 파일 고르는 화면이\n" +
+"   뜨기도 해요. 그러면 아래 방법으로 하세요.\n\n" +
+"📱 2순위: 꾹 누른 채 문지르기 (확실한 방법)\n" +
+"1. [📂 파일 앱에서 골라 담기] → DCIM → Camera 폴더로.\n" +
+"2. 사진 한 장을 꾹 누른 뒤, 손을 떼지 말고 그대로\n" +
+"   옆·아래로 문지르세요. 지나간 사진이 쭉~ 선택돼요!\n" +
+"   (떼고 나서도 다른 사진을 톡톡 누르면 계속 추가돼요)\n" +
+"3. 위쪽의 선택 개수를 보며 적당히(수백 장) 모이면 「완료」.\n" +
+"4. 같은 방법을 몇 번 반복하면 끝. 겹치게 골라도 같은 사진은\n" +
+"   자동으로 합쳐지니 대충 이어서 골라도 돼요.\n" +
+"   ※ 「모두 선택」은 사진이 500장 넘는 폴더에서는\n" +
+"   아예 안 되는 폰이 많아요. 문지르기가 더 확실해요.\n\n" +
+"🗜 3순위: ZIP으로 통째로 넣기\n" +
 "파일 선택창은 한 번에 500장까지만 골라져요.\n" +
 "그래서 폴더를 압축해 'ZIP 파일 1개'로 만들어 넣는 게 최고예요.\n" +
 "1. 홈 화면에서 삼성 「내 파일」 앱을 직접 여세요.\n" +
@@ -1785,20 +1806,6 @@ const BULK_HELP =
 "   방금 만든 Camera.zip '한 개'만 선택하면 끝.\n" +
 "   자동으로 풀리며 전부 들어와요 (촬영 날짜 그대로,\n" +
 "   원본은 안전, 끝나면 zip은 지워도 됨).\n\n" +
-"📱 제일 쉬운 방법: 500장씩 나눠 담기\n" +
-"1. [📂 파일 앱에서 왕창 선택] → DCIM → Camera 폴더로.\n" +
-"2. 사진 아무거나 '한 장'을 1~2초 꾹 누르세요 (폴더 말고 사진!).\n" +
-"   위에 '1개 선택됨'이 뜨면 성공이에요.\n" +
-"   ※ ⋮ 메뉴에 목록·격자만 보인다면? 아직 아무것도 선택을\n" +
-"   안 해서 그래요. 「모두 선택」은 한 장을 선택한 뒤에 나타나요!\n" +
-"3. 이제 오른쪽 위 ⋮ 를 누르면 「모두 선택」이 새로 생겨 있어요\n" +
-"   → 누르세요. '500개까지만 됩니다' 경고가 떠도 괜찮아요!\n" +
-"   500장은 이미 선택된 상태 → 그대로 「완료(열기)」 누르세요.\n" +
-"4. 다 들어오면 같은 방법을 반복하세요. 이때 꿀팁:\n" +
-"   ★ 선택창 위쪽의 정렬을 반대로 바꾸세요 (최신순↔오래된순,\n" +
-"   또는 이름 ↑↔↓). 그러면 반대쪽 끝 500장이 잡혀서\n" +
-"   1,000장은 딱 2번이면 끝나요.\n" +
-"   겹치게 골라도 같은 사진은 자동으로 합쳐지니 대충 해도 OK!\n\n" +
 "🍎 아이폰\n" +
 "사진 고르는 화면에서 손가락을 떼지 않고 쭉~ 문지르면\n" +
 "지나간 사진이 전부 선택돼요.\n\n" +
@@ -2005,12 +2012,6 @@ function bindEvents(){
   $("#addCancel").addEventListener("click", () => { addDim.hidden = true; });
   addDim.addEventListener("click", (e) => { if (e.target.id === "addDim") addDim.hidden = true; });
   $("#btnBulkHelp3").addEventListener("click", () => { addDim.hidden = true; showBulkHelp(); });
-  // 컴퓨터(마우스 환경)에서만 폴더 버튼 노출 + 끌어다 놓기 지원
-  try {
-    if (matchMedia("(pointer:fine)").matches && !/Android|iPhone|iPad/i.test(navigator.userAgent)) {
-      $("#dirLabel").hidden = false;
-    }
-  } catch(e){}
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("drop", (e) => {
     e.preventDefault();
