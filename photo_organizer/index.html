@@ -2035,6 +2035,13 @@ function bindEvents(){
   $("#addCancel").addEventListener("click", () => { addDim.hidden = true; });
   addDim.addEventListener("click", (e) => { if (e.target.id === "addDim") addDim.hidden = true; });
   $("#btnBulkHelp3").addEventListener("click", () => { addDim.hidden = true; showBulkHelp(); });
+  // 삼성 인터넷은 폴더 불러오기 지원이 약함 → 크롬 추천 문구
+  try {
+    if (/SamsungBrowser/i.test(navigator.userAgent)) {
+      const dl = $("#dirLabel");
+      if (dl && dl.firstChild) dl.firstChild.textContent = "\uD83D\uDCC1 폴더째 불러오기 (삼성 인터넷에선 안 될 수 있어요 · 크롬으로 열면 됨) ";
+    }
+  } catch(e){}
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("drop", (e) => {
     e.preventDefault();
