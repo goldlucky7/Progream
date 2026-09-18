@@ -2003,7 +2003,30 @@ function bindEvents(){
   $("#fileIn").addEventListener("change", onFiles);
   $("#fileIn2").addEventListener("change", onFiles);
   $("#allIn").addEventListener("change", onFiles);
+  /* 폴더째 불러오기: 오래 걸리거나 미지원일 때 상황을 알려줌 */
+  let dirPickAt = 0, dirGot = false, dirWaitTimer = null;
+  $("#dirIn").addEventListener("click", () => {
+    dirPickAt = Date.now(); dirGot = false;
+    addDim.hidden = true;
+  });
+  window.addEventListener("focus", () => {
+    if (!dirPickAt) return;
+    clearTimeout(dirWaitTimer);
+    dirWaitTimer = setTimeout(() => {
+      if (!dirGot && dirPickAt) {
+        toast("사진이 많으면 폴더를 읽는 데 2~3분 걸려요 · 화면을 끄지 말고 기다려 주세요. 계속 반응이 없으면 이 폰은 폴더 불러오기가 안 되는 거예요 → [파일 앱에서 골라 담기]로!");
+      }
+    }, 10000);
+  });
   $("#dirIn").addEventListener("change", (e) => {
+    dirGot = true; dirPickAt = 0; clearTimeout(dirWaitTimer);
+    const n = e.target.files ? e.target.files.length : 0;
+    if (!n) {
+      toast("폴더에서 파일을 받지 못했어요 · 이 폰은 폴더 불러오기를 지원하지 않네요 → [파일 앱에서 골라 담기]로 해주세요");
+      e.target.value = "";
+      return;
+    }
+    toast("폴더에서 " + n + "개를 받았어요 · 사진만 골라 불러오는 중…");
     handlePicked(e.target.files, "폴더에서 사진·동영상을 찾지 못했어요");
     e.target.value = "";
   });
