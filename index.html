@@ -541,7 +541,7 @@ nav#tabbar{
     </label>
     <label class="optRow" for="allIn">
       <span aria-hidden="true">📂</span>
-      <div><b>파일 앱에서 왕창 선택</b><small>사진을 꾹 누르면 '모두 선택' 가능 · DCIM→Camera</small></div>
+      <div><b>파일 앱에서 왕창 선택</b><small>꾹 눌러 모두 선택 · Camera 폴더를 압축한 ZIP도 OK (500장 제한 없음)</small></div>
     </label>
     <button class="optRow" id="btnBulkHelp3">
       <span aria-hidden="true">📚</span>
@@ -893,6 +893,114 @@ async function detectFaces(canvas){
   } catch(e){ state.faceOK = false; return 0; }
 }
 
+/* ---------- 파일 판별 · ZIP 통째 불러오기 ---------- */
+const VIDEO_RE = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i;
+const MEDIA_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|mp4|mov|m4v|webm|avi|mkv|3gp)$/i;
+const isMedia = (f) => /^(image|video)\//.test(f.type || "") || MEDIA_RE.test(f.name || "");
+function guessMime(name){
+  const m = /\.([a-z0-9]+)$/i.exec(name || "");
+  const e = m ? m[1].toLowerCase() : "";
+  return ({ jpg:"image/jpeg", jpeg:"image/jpeg", png:"image/png", gif:"image/gif", webp:"image/webp",
+    bmp:"image/bmp", heic:"image/heic", heif:"image/heif", avif:"image/avif",
+    mp4:"video/mp4", m4v:"video/mp4", mov:"video/quicktime", webm:"video/webm",
+    avi:"video/x-msvideo", mkv:"video/x-matroska", "3gp":"video/3gpp" })[e] || "";
+}
+
+// ZIP 안의 사진 목록을 읽어 '필요할 때 한 장씩 꺼내는' 항목으로 만든다 (통째 압축 → 500장 제한 우회)
+async function zipEntries(file){
+  const u32 = (v, o) => v.getUint32(o, true);
+  const u16 = (v, o) => v.getUint16(o, true);
+  const tail = new DataView(await file.slice(Math.max(0, file.size - 70000)).arrayBuffer());
+  let eo = -1;
+  for (let i = tail.byteLength - 22; i >= 0; i--) { if (u32(tail, i) === 0x06054b50) { eo = i; break; } }
+  if (eo < 0) throw new Error("zip eocd");
+  let count = u16(tail, eo + 10), cdSize = u32(tail, eo + 12), cdOff = u32(tail, eo + 16);
+  if (count === 0xFFFF || cdSize === 0xFFFFFFFF || cdOff === 0xFFFFFFFF) {
+    // 4GB 이상·항목 초과 시 ZIP64 구조
+    const lo = eo - 20;
+    if (lo >= 0 && u32(tail, lo) === 0x07064b50) {
+      const e64 = Number(tail.getBigUint64(lo + 8, true));
+      const v = new DataView(await file.slice(e64, e64 + 56).arrayBuffer());
+      if (u32(v, 0) === 0x06064b50) {
+        count = Number(v.getBigUint64(32, true));
+        cdSize = Number(v.getBigUint64(40, true));
+        cdOff = Number(v.getBigUint64(48, true));
+      }
+    }
+  }
+  const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
+  const dec8 = new TextDecoder("utf-8");
+  let decKR = dec8; try { decKR = new TextDecoder("euc-kr"); } catch(e){}
+  const out = [];
+  let needNewer = false, o = 0;
+  while (o + 46 <= cd.byteLength && u32(cd, o) === 0x02014b50) {
+    const flags = u16(cd, o + 8), method = u16(cd, o + 10);
+    const dTime = u16(cd, o + 12), dDate = u16(cd, o + 14);
+    let csize = u32(cd, o + 20), usize = u32(cd, o + 24), lOff = u32(cd, o + 42);
+    const nLen = u16(cd, o + 28), eLen = u16(cd, o + 30), cLen = u16(cd, o + 32);
+    const nameBytes = new Uint8Array(cd.buffer, o + 46, nLen);
+    let path;
+    if (flags & 0x800) path = dec8.decode(nameBytes);
+    else { try { path = decKR.decode(nameBytes); } catch(e){ path = dec8.decode(nameBytes); } }
+    let xo = o + 46 + nLen; const xend = xo + eLen;
+    while (xo + 4 <= xend) {
+      const id = u16(cd, xo), sz = u16(cd, xo + 2);
+      if (id === 1) {
+        let p2 = xo + 4;
+        if (usize === 0xFFFFFFFF) { usize = Number(cd.getBigUint64(p2, true)); p2 += 8; }
+        if (csize === 0xFFFFFFFF) { csize = Number(cd.getBigUint64(p2, true)); p2 += 8; }
+        if (lOff === 0xFFFFFFFF) { lOff = Number(cd.getBigUint64(p2, true)); p2 += 8; }
+      }
+      xo += 4 + sz;
+    }
+    o += 46 + nLen + eLen + cLen;
+    if (path.endsWith("/") || path.includes("__MACOSX")) continue;
+    const bn = path.split("/").pop();
+    if (bn.startsWith("._") || !MEDIA_RE.test(bn)) continue;
+    if (flags & 1) continue;                         // 암호 걸린 항목
+    if (method !== 0 && method !== 8) continue;
+    if (method === 8 && typeof DecompressionStream === "undefined") { needNewer = true; continue; }
+    if (!usize || usize > 314572800) continue;       // 300MB 초과 항목 제외
+    const y = 1980 + ((dDate >> 9) & 127), mo = (dDate >> 5) & 15, da = dDate & 31;
+    const lmMs = new Date(y, Math.max(0, mo - 1), Math.max(1, da), (dTime >> 11) & 31, (dTime >> 5) & 63, (dTime & 31) * 2).getTime() || file.lastModified || Date.now();
+    const type = guessMime(bn);
+    const entry = { name: bn, size: usize, lastModified: lmMs, type };
+    const eCsize = csize, eLOff = lOff, eMethod = method;
+    entry.lazy = async () => {
+      const lh = new DataView(await file.slice(eLOff, eLOff + 30).arrayBuffer());
+      if (u32(lh, 0) !== 0x04034b50) throw new Error("zip lh");
+      const dStart = eLOff + 30 + u16(lh, 26) + u16(lh, 28);
+      const comp = file.slice(dStart, dStart + eCsize);
+      if (eMethod === 0) return comp.slice(0, usize, type);
+      const blob = await new Response(comp.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob();
+      return blob.slice(0, blob.size, type);
+    };
+    out.push(entry);
+  }
+  if (needNewer && !out.length) throw new Error("zip stream");
+  return out;
+}
+
+// 고른 파일 목록에서 ZIP은 풀어서, 나머지는 사진·동영상만 남긴다
+async function expandFiles(list){
+  const out = [];
+  for (const f of list) {
+    if (!f) continue;
+    if (/\.zip$/i.test(f.name || "")) {
+      try {
+        const items = await zipEntries(f);
+        if (items.length) { out.push(...items); toast('압축파일에서 ' + items.length + '장을 찾았어요'); }
+        else toast('"' + f.name + '" 안에서 사진을 찾지 못했어요');
+      } catch(e){
+        toast(String(e).includes("stream")
+          ? "브라우저가 오래되어 압축 해제를 지원하지 않아요 · 브라우저를 업데이트해 주세요"
+          : '"' + f.name + '" 압축파일을 읽지 못했어요');
+      }
+    } else if (isMedia(f)) out.push(f);
+  }
+  return out;
+}
+
 const SHOT_RE = /screen[\s_-]?shot|screenshot|스크린샷|캡처|캡쳐|capture|scr_/i;
 function looksLikeScreen(w, h){
   if (!w || !h) return false;
@@ -960,7 +1068,7 @@ function processVideo(p, file){
 
 /* ---------- 불러오기 ---------- */
 async function importFiles(fileList, opts){
-  const files = [...fileList].filter(f => f && f.size > 0);
+  const files = [...fileList].filter(f => f && (f.lazy || f.size > 0));
   if (!files.length) return;
   state.importing = true;
   const bar = $("#importBar"), fill = $("#importFill"), cnt = $("#importCount");
@@ -977,23 +1085,29 @@ async function importFiles(fileList, opts){
 
   const work = async () => {
     while (queue.length) {
-      const f = queue.shift();
+      const raw = queue.shift();
+      const name = raw.name || "이름없음";
+      const size = raw.size || 0;
+      const lm = raw.lastModified || Date.now();
+      const k = name + "|" + size + "|" + lm;
+      const exist = state.byKey.get(k);
+      if (exist) {
+        // 이미 저장된 사진: 원본 파일만 다시 연결
+        if (!exist.file) {
+          try { exist.file = raw.lazy ? await raw.lazy() : raw; relink++; } catch(e){}
+        }
+        tick(); continue;
+      }
+      let f = raw;
+      if (raw.lazy) { try { f = await raw.lazy(); } catch(e){ tick(); continue; } }
       const p = {
-        id: uid(), file: f, name: f.name || "이름없음",
-        size: f.size, lm: f.lastModified || Date.now(),
-        isVideo: (f.type || "").startsWith("video/"),
+        id: uid(), file: f, name, size, lm,
+        isVideo: ((raw.type || f.type || "").startsWith("video/")) || VIDEO_RE.test(name),
         date: 0, dateSrc: "file", w: 0, h: 0, thumb: null,
         hh: 0, hl: 0, vh: 0, vl: 0, hasHash: false, blur: 0, bright: 128, dur: 0,
         shot: false, autoT: new Set(), manT: new Set(), noAuto: new Set(),
         fav: false, trash: false, sample: !!(opts && opts.sample),
       };
-      const k = recKey(p);
-      const exist = state.byKey.get(k);
-      if (exist) {
-        // 이미 저장된 사진: 원본 파일만 다시 연결
-        if (!exist.file) { exist.file = f; relink++; }
-        tick(); continue;
-      }
       state.byKey.set(k, p);
       try {
         if (p.isVideo) await processVideo(p, f);
@@ -1652,18 +1766,23 @@ function openTextModal(title, sub, text, filename, opts){
   $("#modalDim").hidden = false;
 }
 const BULK_HELP =
-"⚠️ 먼저 알아두세요\n" +
-"갤러리(포토) 선택창에는 '전체선택' 버튼이 원래 없어요.\n" +
-"'모두 선택'은 파일 앱 화면에서만 나옵니다. 그래서 👇\n\n" +
-"📱 안드로이드(갤럭시)에서 '모두 선택'하기\n" +
+"🗜 500장 제한 없이 통째로 넣는 법 (추천!)\n" +
+"파일 선택창은 한 번에 500장까지만 골라져요.\n" +
+"그래서 폴더를 압축해 'ZIP 파일 1개'로 만들어 넣는 게 최고예요.\n" +
+"1. 휴대폰의 「내 파일」 앱을 엽니다 (이 앱 말고, 따로).\n" +
+"2. 내장 저장공간 → DCIM 으로 가서 Camera 폴더를 꾹~ 길게 누르고\n" +
+"   아래(또는 ⋮) 메뉴에서 「압축」을 누르세요 → Camera.zip 생성!\n" +
+"3. 다시 이 앱으로 와서 [📂 파일 앱에서 왕창 선택]을 누르고\n" +
+"   방금 만든 Camera.zip '한 개'만 선택하세요.\n" +
+"4. 자동으로 압축이 풀리며 전부 들어와요. (촬영 날짜도 그대로!)\n" +
+"   끝난 뒤 Camera.zip은 지워도 됩니다. 원본은 안전해요.\n\n" +
+"📱 500장씩 나눠 담는 법 (ZIP이 번거로우면)\n" +
 "1. [📂 파일 앱에서 왕창 선택] 버튼을 누르세요.\n" +
-"   (첫 화면과 '사진 추가' 안에 있어요)\n" +
-"2. 파일 고르는 화면이 뜨면 ☰ 메뉴에서 내장 저장공간(기기 이름)을\n" +
-"   고르고 DCIM → Camera 폴더로 들어가요.\n" +
-"3. ★ 핵심 ★ 사진 하나를 꾹~ 길게 누르세요.\n" +
-"   그래야 체크박스와 '모두 선택' 메뉴가 나타나요!\n" +
-"4. 오른쪽 위 ⋮ 메뉴 → 「모두 선택」 → 「선택(열기)」 끝!\n" +
-"   (⋮가 없으면 왼쪽 위 '전체' 체크박스를 누르세요)\n\n" +
+"2. ☰ 메뉴에서 내장 저장공간(기기 이름) → DCIM → Camera 폴더로.\n" +
+"3. 사진 하나를 꾹~ 길게 누르면 체크박스가 나타나요.\n" +
+"4. 오른쪽 위 ⋮ → 「모두 선택」 → 열기. 500장 제한에 걸리면\n" +
+"   그만큼만 먼저 넣고, 같은 방법으로 이어서 또 넣으면 돼요.\n" +
+"   (겹치게 골라도 같은 사진은 자동으로 합쳐지니 대충 골라도 OK)\n\n" +
 "🍎 아이폰\n" +
 "사진 고르는 화면에서 손가락을 떼지 않고 쭉~ 문지르면\n" +
 "지나간 사진이 전부 선택돼요.\n\n" +
@@ -1844,31 +1963,26 @@ function bindEvents(){
     }
   });
 
-  /* 헤더 · 불러오기 */
+  /* 헤더 · 불러오기 (ZIP이 섞여 있으면 자동으로 풀어서 불러옴) */
   const addDim = $("#addDim");
+  const handlePicked = async (list, emptyMsg) => {
+    const picked = [...(list || [])];
+    if (!picked.length) return;
+    const items = await expandFiles(picked);
+    if (items.length) importFiles(items);
+    else toast(emptyMsg);
+  };
   const onFiles = (e) => {
     addDim.hidden = true;
-    if (e.target.files && e.target.files.length) importFiles(e.target.files);
+    handlePicked(e.target.files, "선택한 파일 중에 사진·동영상이 없었어요");
     e.target.value = "";
   };
   $("#fileIn").addEventListener("change", onFiles);
   $("#fileIn2").addEventListener("change", onFiles);
-  const MEDIA_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|mp4|mov|m4v|webm|avi|mkv|3gp)$/i;
-  const isMedia = (f) => /^(image|video)\//.test(f.type || "") || MEDIA_RE.test(f.name || "");
-  $("#allIn").addEventListener("change", (e) => {
-    addDim.hidden = true;
-    const fs = [...(e.target.files || [])].filter(isMedia);
-    const skipped = (e.target.files ? e.target.files.length : 0) - fs.length;
-    e.target.value = "";
-    if (fs.length) importFiles(fs);
-    else toast("선택한 파일 중에 사진·동영상이 없었어요");
-    if (fs.length && skipped > 0) setTimeout(() => toast("사진·동영상이 아닌 파일 " + skipped + "개는 뺐어요"), 2600);
-  });
+  $("#allIn").addEventListener("change", onFiles);
   $("#dirIn").addEventListener("change", (e) => {
-    const fs = [...(e.target.files || [])].filter(isMedia);
+    handlePicked(e.target.files, "폴더에서 사진·동영상을 찾지 못했어요");
     e.target.value = "";
-    if (fs.length) importFiles(fs);
-    else toast("폴더에서 사진·동영상을 찾지 못했어요");
   });
   /* 사진 추가 선택 시트 */
   $("#btnAdd").addEventListener("click", () => { addDim.hidden = false; });
@@ -1884,8 +1998,7 @@ function bindEvents(){
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("drop", (e) => {
     e.preventDefault();
-    const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter(isMedia);
-    if (fs.length && !state.importing) importFiles(fs);
+    if (!state.importing) handlePicked((e.dataTransfer && e.dataTransfer.files) || [], "사진·동영상 파일을 놓아 주세요");
   });
   $("#btnBulkHelp").addEventListener("click", showBulkHelp);
   $("#btnBulkHelp2").addEventListener("click", showBulkHelp);
