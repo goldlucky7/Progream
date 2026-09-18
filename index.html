@@ -81,6 +81,11 @@ main{padding:0 16px calc(88px + env(safe-area-inset-bottom,0px))}
 section[data-tab]{padding-top:10px}
 .chips{display:flex; gap:8px; overflow-x:auto; padding:8px 0; scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
+/* 월 선택 줄은 항상 화면 위에 붙어 있음 → 스크롤 어디서든 다른 달로 바로 이동 */
+#monthChips{
+  position:sticky; top:calc(env(safe-area-inset-top,0px) + 57px); z-index:6;
+  background:var(--bg); scroll-behavior:smooth;
+}
 .chip{
   flex:none; padding:7px 12px; border-radius:999px; background:var(--chip); font-size:13px; font-weight:700;
   border:1px solid transparent; white-space:nowrap;
@@ -134,7 +139,7 @@ section[data-tab]{padding-top:10px}
 /* ---------- photo grid ---------- */
 .dayGroup{content-visibility:auto; contain-intrinsic-size:auto 300px}
 .monthHead{
-  position:sticky; top:calc(env(safe-area-inset-top,0px) + 57px); z-index:5;
+  position:sticky; top:calc(env(safe-area-inset-top,0px) + 57px + var(--chipsH, 0px)); z-index:5;
   background:var(--bg); padding:12px 0 6px; display:flex; align-items:baseline; gap:8px;
   border-bottom:1px solid var(--line); margin-bottom:6px;
 }
@@ -165,7 +170,7 @@ section[data-tab]{padding-top:10px}
   padding:5px 0; background:rgba(0,0,0,.58); color:#fff;
 }
 .tile .tBtn.on{background:var(--keep)}
-.monthSec{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 112px)}
+.monthSec{scroll-margin-top:calc(env(safe-area-inset-top,0px) + 112px + var(--chipsH, 0px))}
 button.tile.trash::after{
   content:"정리함"; position:absolute; inset:auto 0 0 0; text-align:center; font-size:10px; font-weight:800;
   background:var(--danger); color:#fff; padding:2px 0;
@@ -1498,7 +1503,12 @@ function renderLibrary(){
   const has = state.photos.length > 0;
   empty.hidden = has;
   chips.hidden = !has;
-  if (!has) { wrap.innerHTML = ""; chips.innerHTML = ""; state.lists = state.lists || {}; return; }
+  if (!has) {
+    wrap.innerHTML = ""; chips.innerHTML = "";
+    document.documentElement.style.setProperty("--chipsH", "0px");
+    state.lists = state.lists || {};
+    return;
+  }
 
   const months = new Map(); // ym -> Map(yd -> [p])
   for (const id of state.order) {
@@ -1533,7 +1543,41 @@ function renderLibrary(){
   wrap.innerHTML = html;
   state.lists = state.lists || {};
   state.lists.library = listIds;
+  // 월 선택 줄 높이만큼 월 제목·점프 위치를 내려 줌 (글자 크기 설정이 커도 안 겹치게 실측)
+  document.documentElement.style.setProperty("--chipsH", chips.offsetHeight + "px");
+  _chipYm = null;   // 칩을 새로 그렸으니 현재 달 표시 다시 계산
+  updateMonthChipActive();
 }
+
+/* 스크롤 위치에 맞춰 월 선택 줄의 현재 달을 표시하고, 그 칩이 보이도록 줄을 옆으로 이동 */
+let _chipYm = null;
+function updateMonthChipActive(){
+  const chips = $("#monthChips");
+  if (chips.hidden || state.tab !== "library") return;
+  const limit = chips.getBoundingClientRect().bottom + 8;
+  let cur = null;
+  for (const sec of document.querySelectorAll("#libGroups .monthSec")) {
+    const r = sec.getBoundingClientRect();
+    if (r.bottom > limit) { cur = sec.id.slice(2); break; }
+  }
+  if (cur === _chipYm) return;
+  _chipYm = cur;
+  for (const b of chips.querySelectorAll("[data-jump]")) {
+    const on = b.dataset.jump === cur;
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) {
+      const L = b.offsetLeft, R = L + b.offsetWidth;
+      if (L < chips.scrollLeft + 12) chips.scrollLeft = Math.max(0, L - 12);
+      else if (R > chips.scrollLeft + chips.clientWidth - 12) chips.scrollLeft = R - chips.clientWidth + 12;
+    }
+  }
+}
+let _chipTick = false;
+window.addEventListener("scroll", () => {
+  if (_chipTick) return;
+  _chipTick = true;
+  requestAnimationFrame(() => { _chipTick = false; updateMonthChipActive(); });
+}, { passive: true });
 
 /* ---------- 테마 ---------- */
 function themeCount(t){
