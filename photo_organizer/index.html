@@ -725,7 +725,7 @@ function idbSavePhoto(p, blob){
       w: p.w, h: p.h, isVideo: p.isVideo ? 1 : 0, dur: p.dur, shot: p.shot ? 1 : 0,
       blur: p.blur, bright: p.bright, hh: p.hh, hl: p.hl, vh: p.vh, vl: p.vl,
       hasHash: p.hasHash ? 1 : 0, autoT: [...p.autoT], thumb: blob || null,
-      place: p.place || null, gpsDone: p.gpsDone ? 1 : 0,
+      place: p.place || null, gpsDone: p.gpsDone ? 1 : 0, gpsV: p.gpsDone ? 2 : 0,
     };
     const rq = idb.transaction("photos", "readwrite").objectStore("photos").put(rec, recKey(p));
     rq.onerror = () => { cacheOK = false; };
@@ -2650,6 +2650,7 @@ async function natGpsAll(){
     if (!part.length) continue;
     let res;
     try { res = await NAT.call("gps", { refs: part.map(natRef) }); } catch(e){ return; }
+    if (res.denied) return;   // 위치 읽기 허가 없음 → 표시 안 한 채로 두고, 허가되면 다시 읽음
     const arr = res.gps || [];
     part.forEach((p, j) => {
       const g = arr[j];
@@ -2675,6 +2676,12 @@ async function natSync(byUser){
     if (!acc.granted && byUser !== "quiet") acc = await NAT.call("request");
     // '일부 사진만 허용' 상태에서 사용자가 버튼을 눌렀다면 → 더 고르기/전체 허용 창 다시 열기
     else if (acc.granted && acc.partial && wantAsk) acc = await NAT.call("request");
+    // 업데이트 설치의 경우 위치 읽기 허가가 빠져 있을 수 있어 한 번 요청
+    // (사진 허가가 이미 있으면 별도 창 없이 조용히 허가됨)
+    if (acc.granted && acc.gpsOk === false && !lsGet("po.gpsAsked")) {
+      lsSet("po.gpsAsked", "1");
+      try { acc = await NAT.call("request"); } catch(e){}
+    }
     natState.access = acc;
     natRenderHero();
     if (!acc.granted) {
@@ -2722,7 +2729,8 @@ async function natSync(byUser){
         p.hh = c.hh || 0; p.hl = c.hl || 0; p.vh = c.vh || 0; p.vl = c.vl || 0;
         p.hasHash = true;
       }
-      if (c && c.gpsDone) { p.gpsDone = 1; p.place = c.place || null; }
+      // gpsV 2 이전 기록은 위치 허가 버그가 있던 때라 다시 읽음
+      if (c && c.gpsDone && c.gpsV === 2) { p.gpsDone = 1; p.place = c.place || null; }
       restoreRec(p);
       state.photos.push(p);
       state.byId.set(p.id, p);

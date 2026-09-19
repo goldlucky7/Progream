@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
         val partial = !full && Build.VERSION.SDK_INT >= 34 &&
             has(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
         return JSONObject().put("granted", full || partial).put("partial", partial)
+            .put("gpsOk", has(android.Manifest.permission.ACCESS_MEDIA_LOCATION))
     }
 
     /* ---------- JS 브리지 ---------- */
@@ -449,6 +450,10 @@ class MainActivity : ComponentActivity() {
     /* ---------- 사진 GPS 읽기 (위치 이름 표시용 — 좌표는 기기 안에서만 사용) ---------- */
 
     private fun doGps(p: JSONObject): JSONObject {
+        // 허가가 없으면 '모른다'고 답해서, 나중에 허가된 뒤 다시 읽게 함
+        if (!has(android.Manifest.permission.ACCESS_MEDIA_LOCATION)) {
+            return JSONObject().put("denied", true)
+        }
         val refs = p.optJSONArray("refs") ?: JSONArray()
         val out = JSONArray()
         for (i in 0 until refs.length()) {

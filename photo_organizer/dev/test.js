@@ -261,7 +261,7 @@ const URL = 'http://127.0.0.1:8901/index.html';
     { id: 'IMG_2024_b.jpg', mt: 'v', name: 'video_b.mp4', size: 88888, lm: 1714870400000, taken: 1714876000000, mime: 'video/mp4', w: 1920, h: 1080, dur: 12.5, bucket: 'Camera' },
   ];
   const mockScript = (granted, partial) => `
-    window.__mock = { calls: [], granted: ${granted}, partial: ${partial}, saved: [],
+    window.__mock = { calls: [], granted: ${granted}, partial: ${partial}, saved: [], gpsOk: false,
       items: JSON.parse(${JSON.stringify(JSON.stringify(NAT_ITEMS))}) };
     window.AndroidNative = {
       getInfo(){ return JSON.stringify({ platform: 'android', ver: '1.0-test', sdk: 34,
@@ -270,8 +270,8 @@ const URL = 'http://127.0.0.1:8901/index.html';
         const p = JSON.parse(params || '{}');
         window.__mock.calls.push([method, p]);
         const fin = (ok, payload) => setTimeout(() => window.__anDone(id, ok, JSON.stringify(payload)), 5);
-        if (method === 'access') return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial });
-        if (method === 'request') return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial });
+        if (method === 'access') return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial, gpsOk: window.__mock.gpsOk });
+        if (method === 'request') { window.__mock.gpsOk = true; return fin(true, { granted: window.__mock.granted, partial: window.__mock.partial, gpsOk: true }); }
         if (method === 'list') {
           // 삭제된 항목은 리로드(재시작) 후에도 목록에서 빠져 있어야 실제 기기와 같다
           const rm = JSON.parse(localStorage.getItem('__mockRm') || '[]');
@@ -294,6 +294,7 @@ const URL = 'http://127.0.0.1:8901/index.html';
         if (method === 'saveText') { window.__mock.saved.push(p.filename); return fin(true, { ok: true, where: 'Download' }); }
         if (method === 'settings') return fin(true, { ok: true });
         if (method === 'gps') {
+          if (!window.__mock.gpsOk) return fin(true, { denied: true });
           const G = { 'i:dup_1.jpg': [35.16, 129.17], 'i:dup_2.jpg': [35.161, 129.171], 'i:IMG_2024_c.jpg': [37.517, 127.047] };
           return fin(true, { gps: p.refs.map(r => G[r] || null) });
         }
@@ -345,6 +346,8 @@ const URL = 'http://127.0.0.1:8901/index.html';
   await np.click('#tabbar button[data-go="library"]');
   check('nat place on day label', (await np.locator('#libGroups').textContent()).includes('📍부산 해운대구'));
   check('nat place searchable', await np.evaluate(() => searchable(state.photos.find(x => x.name === 'dup_1.jpg')).includes('해운대')));
+  // 업데이트 설치처럼 위치 허가가 빠진 상태에서 시작해도 자동으로 허가를 받아냄
+  check('nat gps permission auto-request', await np.evaluate(() => window.__mock.calls.some(c => c[0] === 'request') && window.__mock.gpsOk === true));
 
   // 3) 뷰어: 사진은 원본 스트리밍, 동영상은 재생 버튼
   await np.evaluate(() => { const q = state.photos.find(x => x.name === 'dup_1.jpg'); document.querySelector('.tile[data-id="' + q.id + '"]').click(); });
@@ -418,6 +421,7 @@ const URL = 'http://127.0.0.1:8901/index.html';
   await np.waitForFunction(() => typeof state !== 'undefined' && state.photos.length === 5 && !natState.syncing, null, { timeout: 20000 });
   check('nat resync after restart (5 left)', true);
   check('nat records restored', await np.evaluate(() => { const q = state.photos.find(x => x.name === 'dup_1.jpg'); return q && q.manT.has('테스트폴더'); }));
+  check('nat place cached after restart', await np.evaluate(() => state.photos.find(x => x.name === 'dup_1.jpg').place === '부산 해운대구'));
   check('nat analysis cache reused', await np.evaluate(() => state.photos.filter(p => !p.isVideo).every(p => p.hasHash)));
   check('nat dups recomputed from cache', await np.evaluate(() => state.dupGroups.length === 0));
   await nctx.close();
