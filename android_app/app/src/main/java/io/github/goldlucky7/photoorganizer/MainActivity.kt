@@ -168,13 +168,18 @@ class MainActivity : ComponentActivity() {
         Build.VERSION.SDK_INT >= 34 -> arrayOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
             android.Manifest.permission.READ_MEDIA_VIDEO,
-            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
         )
         Build.VERSION.SDK_INT >= 33 -> arrayOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
-            android.Manifest.permission.READ_MEDIA_VIDEO
+            android.Manifest.permission.READ_MEDIA_VIDEO,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
         )
-        else -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        else -> arrayOf(
+            android.Manifest.permission.READ_EXTERNAL_STORAGE,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
+        )
     }
 
     private fun accessState(): JSONObject {
@@ -229,6 +234,7 @@ class MainActivity : ComponentActivity() {
                             "list" -> done(id, true, doList())
                             "album" -> done(id, true, doAlbum(id, p))
                             "saveText" -> done(id, true, doSaveText(p))
+                            "gps" -> done(id, true, doGps(p))
                             "updCheck" -> done(id, true, doUpdateCheck())
                             "updRun" -> done(id, true, doUpdateRun(id))
                             else -> done(id, false, JSONObject().put("error", "unknown: $method"))
@@ -438,6 +444,27 @@ class MainActivity : ComponentActivity() {
         cv.clear(); cv.put(MediaStore.MediaColumns.IS_PENDING, 0)
         contentResolver.update(outUri, cv, null, null)
         return JSONObject().put("ok", true).put("where", "다운로드(Download) 폴더")
+    }
+
+    /* ---------- 사진 GPS 읽기 (위치 이름 표시용 — 좌표는 기기 안에서만 사용) ---------- */
+
+    private fun doGps(p: JSONObject): JSONObject {
+        val refs = p.optJSONArray("refs") ?: JSONArray()
+        val out = JSONArray()
+        for (i in 0 until refs.length()) {
+            var v: Any = JSONObject.NULL
+            try {
+                val (mt, mid) = parseRef(refs.getString(i))
+                val uri = MediaStore.setRequireOriginal(uriFor(mt, mid))
+                contentResolver.openInputStream(uri)?.use { ins ->
+                    val ex = android.media.ExifInterface(ins)
+                    val ll = FloatArray(2)
+                    if (ex.getLatLong(ll)) v = JSONArray().put(ll[0].toDouble()).put(ll[1].toDouble())
+                }
+            } catch (_: Exception) { /* 권한 미허용·GPS 없음 → null */ }
+            out.put(v)
+        }
+        return JSONObject().put("gps", out)
     }
 
     /* ---------- 앱 업데이트 (GitHub Releases 고정 주소에서 새 버전 확인·설치) ---------- */

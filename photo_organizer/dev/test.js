@@ -115,6 +115,9 @@ const URL = 'http://127.0.0.1:8901/index.html';
   check('food grid 4', (await page.locator('#themeBody .grid .tile').count()) === 4);
   await page.click('[data-tagmode="음식"]');
   check('tag banner shown', await page.locator('.tagBanner').isVisible());
+  // 사진 담기 화면의 '나머지 사진'이 날짜별(년·월·일)로 묶여서 보이는지
+  const tagTxt = await page.locator('#themeBody').textContent();
+  check('tagging grouped by date', tagTxt.includes('나머지 사진') && tagTxt.includes('2026년 9월') && /\d+일 [일월화수목금토]요일/.test(tagTxt));
   const restFirst = page.locator('#themeBody .grid').nth(1).locator('.tile').first();
   await restFirst.click();
   await page.waitForFunction(() => document.querySelectorAll('#themeBody .grid')[0].querySelectorAll('.tile').length === 5);
@@ -290,6 +293,10 @@ const URL = 'http://127.0.0.1:8901/index.html';
         }
         if (method === 'saveText') { window.__mock.saved.push(p.filename); return fin(true, { ok: true, where: 'Download' }); }
         if (method === 'settings') return fin(true, { ok: true });
+        if (method === 'gps') {
+          const G = { 'i:dup_1.jpg': [35.16, 129.17], 'i:dup_2.jpg': [35.161, 129.171], 'i:IMG_2024_c.jpg': [37.517, 127.047] };
+          return fin(true, { gps: p.refs.map(r => G[r] || null) });
+        }
         if (method === 'updCheck') return fin(true, { cur: 3, latest: window.__mock.updLatest || 3 });
         if (method === 'updRun') {
           let d = 0;
@@ -329,6 +336,15 @@ const URL = 'http://127.0.0.1:8901/index.html';
   const nsets = await np.evaluate(() => { const s = cleanSets(); return { dup: state.dupGroups.map(g => g.map(p => p.name)), blur: s.blur.map(p => p.name), dark: s.dark.map(p => p.name) }; });
   check('nat dup pair found', nsets.dup.some(g => g.includes('dup_1.jpg') && g.includes('dup_2.jpg')), JSON.stringify(nsets.dup));
   check('nat dark found', nsets.dark.includes('dark_1.jpg'), JSON.stringify(nsets.dark));
+
+  // 2-2) 위치: GPS를 기기 안 지역 사전과 대조해 '부산 해운대구' 같은 이름 표시
+  await np.waitForFunction(() => state.photos.filter(p => p.nat && !p.isVideo).every(p => p.gpsDone !== undefined), null, { timeout: 20000 });
+  check('nat place busan', await np.evaluate(() => state.photos.find(x => x.name === 'dup_1.jpg').place === '부산 해운대구'));
+  check('nat place seoul', await np.evaluate(() => state.photos.find(x => x.name === 'IMG_2024_c.jpg').place === '서울 강남구'));
+  check('nat place null without gps', await np.evaluate(() => state.photos.find(x => x.name === 'blurry_1.jpg').place === null));
+  await np.click('#tabbar button[data-go="library"]');
+  check('nat place on day label', (await np.locator('#libGroups').textContent()).includes('📍부산 해운대구'));
+  check('nat place searchable', await np.evaluate(() => searchable(state.photos.find(x => x.name === 'dup_1.jpg')).includes('해운대')));
 
   // 3) 뷰어: 사진은 원본 스트리밍, 동영상은 재생 버튼
   await np.evaluate(() => { const q = state.photos.find(x => x.name === 'dup_1.jpg'); document.querySelector('.tile[data-id="' + q.id + '"]').click(); });
